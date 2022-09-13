@@ -35,6 +35,7 @@ type domainKeystone struct {
 // Config holds the configuration parameters for Keystone connector.
 // Keystone should expose API v3
 // An example config:
+//
 //	connectors:
 //		type: keystone
 //		id: keystone
@@ -97,9 +98,18 @@ type groupsResponse struct {
 
 type userResponse struct {
 	User struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
-		ID    string `json:"id"`
+		Name         string `json:"name"`
+		Email        string `json:"email"`
+		ID           string `json:"id"`
+		OSFederation *struct {
+			Groups           []group `json:"groups"`
+			IdentityProvider struct {
+				ID string `json:"id"`
+			} `json:"identity_provider"`
+			Protocol struct {
+				ID string `json:"id"`
+			} `json:"protocol"`
+		} `json:"OS-FEDERATION"`
 	} `json:"user"`
 }
 
@@ -143,15 +153,6 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 	if err != nil {
 		return identity, false, fmt.Errorf("keystone: invalid token response: %v", err)
 	}
-	if scopes.Groups {
-		groups, err := p.getUserGroups(ctx, tokenResp.Token.User.ID, token)
-		if err != nil {
-			return identity, false, err
-		}
-		identity.Groups = groups
-	}
-	identity.Username = username
-	identity.UserID = tokenResp.Token.User.ID
 
 	user, err := p.getUser(ctx, tokenResp.Token.User.ID, token)
 	if err != nil {
@@ -161,6 +162,25 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 		identity.Email = user.User.Email
 		identity.EmailVerified = true
 	}
+
+	var groups []string
+	if scopes.Groups {
+		if user.User.OSFederation != nil {
+			// For SSO users, use the groups passed down through the federation API.
+			for _, group := range user.User.OSFederation.Groups {
+				groups = append(groups, group.Name)
+			}
+		} else {
+			// For local users, fetch the groups stored in Keystone.
+			groups, err = p.getUserGroups(ctx, tokenResp.Token.User.ID, token)
+			if err != nil {
+				return identity, false, err
+			}
+		}
+	}
+	identity.Groups = groups
+	identity.Username = username
+	identity.UserID = tokenResp.Token.User.ID
 
 	return identity, true, nil
 }
