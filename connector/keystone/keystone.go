@@ -109,9 +109,18 @@ type groupsResponse struct {
 
 type userResponse struct {
 	User struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
-		ID    string `json:"id"`
+		Name         string `json:"name"`
+		Email        string `json:"email"`
+		ID           string `json:"id"`
+		OSFederation *struct {
+			Groups           []keystoneGroup `json:"groups"`
+			IdentityProvider struct {
+				ID string `json:"id"`
+			} `json:"identity_provider"`
+			Protocol struct {
+				ID string `json:"id"`
+			} `json:"protocol"`
+		} `json:"OS-FEDERATION"`
 	} `json:"user"`
 }
 
@@ -127,8 +136,9 @@ type identifierContainer struct {
 }
 
 type roleAssignment struct {
-	User identifierContainer `json:"user"`
-	Role identifierContainer `json:"role"`
+	User  identifierContainer `json:"user"`
+	Group identifierContainer `json:"group"`
+	Role  identifierContainer `json:"role"`
 }
 
 var (
@@ -153,29 +163,20 @@ func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error)
 func (p *conn) Close() error { return nil }
 
 func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, password string) (identity connector.Identity, validPassword bool, err error) {
-	token, tokenInfo, err := p.authenticate(ctx, username, password)
-	if err != nil || tokenInfo == nil {
-		return identity, false, err
-	}
-	var userGroups []string
-	if p.groupsRequired(scopes.Groups) {
-		if scopes.Groups {
-			userGroups, err = p.getUserGroups(ctx, tokenInfo.User.ID, token)
-			if err != nil {
-				return identity, false, err
-			}
+	var token string
+	var tokenInfo *tokenInfo
+	if username == "" {
+		token = password
+		tokenInfo, err = p.getTokenInfo(ctx, token)
+		if err != nil {
+			return connector.Identity{}, false, err
 		}
-		if p.UseRolesAsGroups {
-			roleGroups, err := p.getUserRolesAsGroups(ctx, token, tokenInfo.User.ID, "")
-			if err != nil {
-				return connector.Identity{}, false, err
-			}
-			userGroups = append(userGroups, roleGroups...)
+	} else {
+		token, tokenInfo, err = p.authenticate(ctx, username, password)
+		if err != nil || tokenInfo == nil {
+			return identity, false, err
 		}
-		identity.Groups = p.filterGroups(pruneDuplicates(userGroups))
 	}
-	identity.Username = username
-	identity.UserID = tokenInfo.User.ID
 
 	user, err := p.getUser(ctx, tokenInfo.User.ID, token)
 	if err != nil {
@@ -185,6 +186,36 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 		identity.Email = user.User.Email
 		identity.EmailVerified = true
 	}
+
+	var userGroups []string
+	if p.groupsRequired(scopes.Groups) {
+		if scopes.Groups {
+			if user.User.OSFederation != nil {
+				// For SSO users, use the groups passed down through the federation API.
+				for _, osGroup := range user.User.OSFederation.Groups {
+					if len(osGroup.Name) > 0 {
+						userGroups = append(userGroups, osGroup.Name)
+					}
+				}
+			} else {
+				// For local users, fetch the groups stored in Keystone.
+				userGroups, err = p.getUserGroups(ctx, tokenInfo.User.ID, token)
+				if err != nil {
+					return identity, false, err
+				}
+			}
+		}
+		if p.UseRolesAsGroups {
+			roleGroups, err := p.getUserRolesAsGroups(ctx, token, tokenInfo.User.ID, "")
+			if err != nil {
+				return connector.Identity{}, false, err
+			}
+			userGroups = append(userGroups, roleGroups...)
+		}
+	}
+	identity.Groups = p.filterGroups(pruneDuplicates(userGroups))
+	identity.Username = username
+	identity.UserID = tokenInfo.User.ID
 
 	return identity, true, nil
 }
@@ -316,6 +347,33 @@ func (p *conn) getUser(ctx context.Context, userID string, token string) (*userR
 	}
 
 	return &user, nil
+}
+
+func (p *conn) getTokenInfo(ctx context.Context, token string) (*tokenInfo, error) {
+	// https://developer.openstack.org/api-ref/identity/v3/#password-authentication-with-unscoped-authorization
+	authTokenURL := p.Host + "/v3/auth/tokens/"
+	req, err := http.NewRequestWithContext(ctx, "POST", authTokenURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Auth-Token", token)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	tokenInfo := &tokenInfo{}
+	err = json.Unmarshal(data, tokenInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	return tokenInfo, nil
 }
 
 func (p *conn) getUserGroups(ctx context.Context, userID string, token string) ([]string, error) {
