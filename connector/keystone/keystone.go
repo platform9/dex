@@ -18,9 +18,15 @@ type conn struct {
 	Host             string
 	AdminUsername    string
 	AdminPassword    string
+	Groups           []group
 	UseRolesAsGroups bool
 	client           *http.Client
 	Logger           log.Logger
+}
+
+type group struct {
+	Name    string `json:"name"`
+	Replace string `json:"replace"`
 }
 
 type userKeystone struct {
@@ -49,11 +55,12 @@ type domainKeystone struct {
 //			keystonePassword: DEMO_PASS
 //			useRolesAsGroups: true
 type Config struct {
-	Domain           string `json:"domain"`
-	Host             string `json:"keystoneHost"`
-	AdminUsername    string `json:"keystoneUsername"`
-	AdminPassword    string `json:"keystonePassword"`
-	UseRolesAsGroups bool   `json:"useRolesAsGroups"`
+	Domain           string  `json:"domain"`
+	Host             string  `json:"keystoneHost"`
+	AdminUsername    string  `json:"keystoneUsername"`
+	AdminPassword    string  `json:"keystonePassword"`
+	UseRolesAsGroups bool    `json:"useRolesAsGroups"`
+	Groups           []group `json:"groups"`
 }
 
 type loginRequestData struct {
@@ -91,13 +98,13 @@ type tokenResponse struct {
 	Token token `json:"token"`
 }
 
-type group struct {
+type keystoneGroup struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
 type groupsResponse struct {
-	Groups []group `json:"groups"`
+	Groups []keystoneGroup `json:"groups"`
 }
 
 type userResponse struct {
@@ -106,6 +113,22 @@ type userResponse struct {
 		Email string `json:"email"`
 		ID    string `json:"id"`
 	} `json:"user"`
+}
+
+type role struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	DomainID    string `json:"domain_id"`
+	Description string `json:"description"`
+}
+
+type identifierContainer struct {
+	ID string `json:"id"`
+}
+
+type roleAssignment struct {
+	User identifierContainer `json:"user"`
+	Role identifierContainer `json:"role"`
 }
 
 var (
@@ -121,6 +144,7 @@ func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error)
 		AdminUsername:    c.AdminUsername,
 		AdminPassword:    c.AdminPassword,
 		UseRolesAsGroups: c.UseRolesAsGroups,
+		Groups:           c.Groups,
 		Logger:           logger,
 		client:           http.DefaultClient,
 	}, nil
@@ -150,20 +174,23 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 	if err != nil {
 		return identity, false, fmt.Errorf("keystone: invalid token response: %v", err)
 	}
-	var groups []string
-	if scopes.Groups {
-		groups, err = p.getUserGroups(ctx, tokenResp.Token.User.ID, token)
-		if err != nil {
-			return identity, false, err
+	var userGroups []string
+	if p.groupsRequired(scopes.Groups) {
+		if scopes.Groups {
+			userGroups, err = p.getUserGroups(ctx, tokenResp.Token.User.ID, token)
+			if err != nil {
+				return identity, false, err
+			}
 		}
-	}
-	if p.UseRolesAsGroups {
-		_, err := p.getUserRolesAsGroups(ctx, token, tokenResp.Token.User.ID, "")
-		if err != nil {
-			return connector.Identity{}, false, err
+		if p.UseRolesAsGroups {
+			roleGroups, err := p.getUserRolesAsGroups(ctx, token, tokenResp.Token.User.ID, "")
+			if err != nil {
+				return connector.Identity{}, false, err
+			}
+			userGroups = append(userGroups, roleGroups...)
 		}
+		identity.Groups = p.filterGroups(pruneDuplicates(userGroups))
 	}
-	identity.Groups = pruneDuplicates(groups)
 	identity.Username = username
 	identity.UserID = tokenResp.Token.User.ID
 
@@ -325,6 +352,10 @@ func (p *conn) getUserGroups(ctx context.Context, userID string, token string) (
 	return groups, nil
 }
 
+func (p *conn) groupsRequired(groupScope bool) bool {
+	return len(p.Groups) > 0 || groupScope
+}
+
 // If project ID is left empty, all roles will be fetched
 func (p *conn) getUserRolesAsGroups(ctx context.Context, token string, userID string, projectID string) ([]string, error) {
 	roleAssignments, err := p.getRoleAssignments(ctx, token, userID, projectID)
@@ -351,24 +382,9 @@ func (p *conn) getUserRolesAsGroups(ctx context.Context, token string, userID st
 	return groups, nil
 }
 
-type role struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	DomainID    string `json:"domain_id"`
-	Description string `json:"description"`
-}
-
-type identifierContainer struct {
-	ID string `json:"id"`
-}
-
-type roleAssignment struct {
-	User identifierContainer `json:"user"`
-	Role identifierContainer `json:"role"`
-}
-
 func (p *conn) getRoleAssignments(ctx context.Context, token string, userID string, projectID string) ([]roleAssignment, error) {
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/v3/role_assignments?role_assignments?user.id=%s&scope.project.id=%s", p.Host, userID, projectID), nil)
+	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail#list-role-assignments
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/v3/role_assignments?effective&user.id=%s&scope.project.id=%s", p.Host, userID, projectID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -398,6 +414,7 @@ func (p *conn) getRoleAssignments(ctx context.Context, token string, userID stri
 }
 
 func (p *conn) getRoles(ctx context.Context, token string) ([]role, error) {
+	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail,list-roles-detail#list-roles
 	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/v3/roles", p.Host), nil)
 	if err != nil {
 		return nil, err
@@ -426,6 +443,26 @@ func (p *conn) getRoles(ctx context.Context, token string) ([]role, error) {
 	}
 
 	return rolesResp.Roles, nil
+}
+
+func (p *conn) filterGroups(groups []string) []string {
+	if len(p.Groups) == 0 {
+		return groups
+	}
+	var matches []string
+	for _, group := range groups {
+		for _, filter := range p.Groups {
+			// Future: support regexp?
+			if group != filter.Name {
+				continue
+			}
+			if len(filter.Replace) > 0 {
+				group = filter.Replace
+			}
+			matches = append(matches, group)
+		}
+	}
+	return matches
 }
 
 func pruneDuplicates(ss []string) []string {
