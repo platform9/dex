@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/dexidp/dex/connector"
 	"github.com/dexidp/dex/pkg/log"
@@ -30,9 +31,18 @@ type group struct {
 }
 
 type userKeystone struct {
-	Domain domainKeystone `json:"domain"`
-	ID     string         `json:"id"`
-	Name   string         `json:"name"`
+	Domain       domainKeystone `json:"domain"`
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	OSFederation *struct {
+		Groups           []keystoneGroup `json:"groups"`
+		IdentityProvider struct {
+			ID string `json:"id"`
+		} `json:"identity_provider"`
+		Protocol struct {
+			ID string `json:"id"`
+		} `json:"protocol"`
+	} `json:"OS-FEDERATION"`
 }
 
 type domainKeystone struct {
@@ -109,18 +119,9 @@ type groupsResponse struct {
 
 type userResponse struct {
 	User struct {
-		Name         string `json:"name"`
-		Email        string `json:"email"`
-		ID           string `json:"id"`
-		OSFederation *struct {
-			Groups           []keystoneGroup `json:"groups"`
-			IdentityProvider struct {
-				ID string `json:"id"`
-			} `json:"identity_provider"`
-			Protocol struct {
-				ID string `json:"id"`
-			} `json:"protocol"`
-		} `json:"OS-FEDERATION"`
+		Name  string `json:"name"`
+		Email string `json:"email"`
+		ID    string `json:"id"`
 	} `json:"user"`
 }
 
@@ -183,22 +184,12 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 	fmt.Printf("token: %+v\n", token)
 	fmt.Printf("tokenInfo: %+v\n", tokenInfo)
 
-	user, err := p.getUser(ctx, tokenInfo.User.ID, token)
-	if err != nil {
-		return identity, false, err
-	}
-	if user.User.Email != "" {
-		identity.Email = user.User.Email
-		identity.EmailVerified = true
-	}
-	fmt.Printf("user: %+v\n", user)
-
 	var userGroups []string
 	if p.groupsRequired(scopes.Groups) {
 		if scopes.Groups {
-			if user.User.OSFederation != nil {
+			if tokenInfo.User.OSFederation != nil {
 				// For SSO users, use the groups passed down through the federation API.
-				for _, osGroup := range user.User.OSFederation.Groups {
+				for _, osGroup := range tokenInfo.User.OSFederation.Groups {
 					if len(osGroup.Name) > 0 {
 						userGroups = append(userGroups, osGroup.Name)
 					}
@@ -220,8 +211,18 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 		}
 	}
 	identity.Groups = p.filterGroups(pruneDuplicates(userGroups))
-	identity.Username = username
+	identity.Username = tokenInfo.User.Name
 	identity.UserID = tokenInfo.User.ID
+
+	user, err := p.getUser(ctx, tokenInfo.User.ID, token)
+	if err != nil {
+		return identity, false, err
+	}
+	if user.User.Email != "" {
+		identity.Email = user.User.Email
+		identity.EmailVerified = true
+	}
+	fmt.Printf("user: %+v\n", user)
 
 	fmt.Printf("identity: %+v\n", identity)
 	fmt.Println("=============>")
@@ -359,12 +360,14 @@ func (p *conn) getUser(ctx context.Context, userID string, token string) (*userR
 
 func (p *conn) getTokenInfo(ctx context.Context, token string) (*tokenInfo, error) {
 	// https://developer.openstack.org/api-ref/identity/v3/#password-authentication-with-unscoped-authorization
-	authTokenURL := p.Host + "/v3/auth/tokens/"
-	req, err := http.NewRequestWithContext(ctx, "POST", authTokenURL, nil)
+	authTokenURL := p.Host + "/v3/auth/tokens"
+	p.Logger.Infof("Fetching Keystone token info: %s", authTokenURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authTokenURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("X-Auth-Token", token)
+	req.Header.Set("X-Subject-Token", token)
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -375,13 +378,18 @@ func (p *conn) getTokenInfo(ctx context.Context, token string) (*tokenInfo, erro
 	}
 	defer resp.Body.Close()
 
-	tokenInfo := &tokenInfo{}
-	err = json.Unmarshal(data, tokenInfo)
+	if resp.StatusCode >= 400 {
+		p.Logger.Errorf("keystone: get token info: error status code %d: %s\n", resp.StatusCode, strings.ReplaceAll(string(data), "\n", ""))
+		return nil, fmt.Errorf("keystone: get token info: error status code %d", resp.StatusCode)
+	}
+
+	tokenResp := &tokenResponse{}
+	err = json.Unmarshal(data, tokenResp)
 	if err != nil {
 		return nil, err
 	}
 
-	return tokenInfo, nil
+	return &tokenResp.Token, nil
 }
 
 func (p *conn) getUserGroups(ctx context.Context, userID string, token string) ([]string, error) {
