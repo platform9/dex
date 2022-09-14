@@ -168,7 +168,7 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 	fmt.Println("<=============")
 	fmt.Printf("username: %+v\n", username)
 	fmt.Printf("password: %+v\n", password)
-	if username == "" {
+	if username == "" || username == "_TOKEN_" {
 		token = password
 		tokenInfo, err = p.getTokenInfo(ctx, token)
 		if err != nil {
