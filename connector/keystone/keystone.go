@@ -165,6 +165,9 @@ func (p *conn) Close() error { return nil }
 func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, password string) (identity connector.Identity, validPassword bool, err error) {
 	var token string
 	var tokenInfo *tokenInfo
+	fmt.Println("<=============")
+	fmt.Printf("username: %+v\n", username)
+	fmt.Printf("password: %+v\n", password)
 	if username == "" {
 		token = password
 		tokenInfo, err = p.getTokenInfo(ctx, token)
@@ -177,6 +180,8 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 			return identity, false, err
 		}
 	}
+	fmt.Printf("token: %+v\n", token)
+	fmt.Printf("tokenInfo: %+v\n", tokenInfo)
 
 	user, err := p.getUser(ctx, tokenInfo.User.ID, token)
 	if err != nil {
@@ -186,6 +191,7 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 		identity.Email = user.User.Email
 		identity.EmailVerified = true
 	}
+	fmt.Printf("user: %+v\n", user)
 
 	var userGroups []string
 	if p.groupsRequired(scopes.Groups) {
@@ -217,6 +223,8 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 	identity.Username = username
 	identity.UserID = tokenInfo.User.ID
 
+	fmt.Printf("identity: %+v\n", identity)
+	fmt.Println("=============>")
 	return identity, true, nil
 }
 
