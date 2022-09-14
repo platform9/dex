@@ -90,12 +90,12 @@ type domain struct {
 	ID string `json:"id"`
 }
 
-type token struct {
+type tokenInfo struct {
 	User userKeystone `json:"user"`
 }
 
 type tokenResponse struct {
-	Token token `json:"token"`
+	Token tokenInfo `json:"token"`
 }
 
 type keystoneGroup struct {
@@ -153,37 +153,20 @@ func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error)
 func (p *conn) Close() error { return nil }
 
 func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, password string) (identity connector.Identity, validPassword bool, err error) {
-	resp, err := p.getTokenResponse(ctx, username, password)
-	if err != nil {
-		return identity, false, fmt.Errorf("keystone: error %v", err)
-	}
-	if resp.StatusCode/100 != 2 {
-		return identity, false, fmt.Errorf("keystone login: error %v", resp.StatusCode)
-	}
-	if resp.StatusCode != 201 {
-		return identity, false, nil
-	}
-	token := resp.Header.Get("X-Subject-Token")
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
+	token, tokenInfo, err := p.authenticate(ctx, username, password)
+	if err != nil || tokenInfo == nil {
 		return identity, false, err
-	}
-	defer resp.Body.Close()
-	tokenResp := new(tokenResponse)
-	err = json.Unmarshal(data, &tokenResp)
-	if err != nil {
-		return identity, false, fmt.Errorf("keystone: invalid token response: %v", err)
 	}
 	var userGroups []string
 	if p.groupsRequired(scopes.Groups) {
 		if scopes.Groups {
-			userGroups, err = p.getUserGroups(ctx, tokenResp.Token.User.ID, token)
+			userGroups, err = p.getUserGroups(ctx, tokenInfo.User.ID, token)
 			if err != nil {
 				return identity, false, err
 			}
 		}
 		if p.UseRolesAsGroups {
-			roleGroups, err := p.getUserRolesAsGroups(ctx, token, tokenResp.Token.User.ID, "")
+			roleGroups, err := p.getUserRolesAsGroups(ctx, token, tokenInfo.User.ID, "")
 			if err != nil {
 				return connector.Identity{}, false, err
 			}
@@ -192,9 +175,9 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 		identity.Groups = p.filterGroups(pruneDuplicates(userGroups))
 	}
 	identity.Username = username
-	identity.UserID = tokenResp.Token.User.ID
+	identity.UserID = tokenInfo.User.ID
 
-	user, err := p.getUser(ctx, tokenResp.Token.User.ID, token)
+	user, err := p.getUser(ctx, tokenInfo.User.ID, token)
 	if err != nil {
 		return identity, false, err
 	}
@@ -232,7 +215,7 @@ func (p *conn) Refresh(
 	return identity, nil
 }
 
-func (p *conn) getTokenResponse(ctx context.Context, username, pass string) (response *http.Response, err error) {
+func (p *conn) authenticate(ctx context.Context, username, pass string) (string, *tokenInfo, error) {
 	client := &http.Client{}
 	jsonData := loginRequestData{
 		auth: auth{
@@ -250,29 +233,48 @@ func (p *conn) getTokenResponse(ctx context.Context, username, pass string) (res
 	}
 	jsonValue, err := json.Marshal(jsonData)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	// https://developer.openstack.org/api-ref/identity/v3/#password-authentication-with-unscoped-authorization
 	authTokenURL := p.Host + "/v3/auth/tokens/"
 	req, err := http.NewRequest("POST", authTokenURL, bytes.NewBuffer(jsonValue))
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 
-	return client.Do(req)
+	resp, err := client.Do(req)
+
+	if err != nil {
+		return "", nil, fmt.Errorf("keystone: error %v", err)
+	}
+	if resp.StatusCode/100 != 2 {
+		return "", nil, fmt.Errorf("keystone login: error %v", resp.StatusCode)
+	}
+	if resp.StatusCode != 201 {
+		return "", nil, nil
+	}
+	token := resp.Header.Get("X-Subject-Token")
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+	tokenResp := &tokenResponse{}
+	err = json.Unmarshal(data, tokenResp)
+	if err != nil {
+		return "", nil, fmt.Errorf("keystone: invalid token response: %v", err)
+	}
+	return token, &tokenResp.Token, nil
 }
 
 func (p *conn) getAdminToken(ctx context.Context) (string, error) {
-	resp, err := p.getTokenResponse(ctx, p.AdminUsername, p.AdminPassword)
+	token, _, err := p.authenticate(ctx, p.AdminUsername, p.AdminPassword)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-
-	token := resp.Header.Get("X-Subject-Token")
 	return token, nil
 }
 
