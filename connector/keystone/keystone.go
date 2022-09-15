@@ -101,7 +101,8 @@ type domain struct {
 }
 
 type tokenInfo struct {
-	User userKeystone `json:"user"`
+	User  userKeystone `json:"user"`
+	Roles []role       `json:"roles"`
 }
 
 type tokenResponse struct {
@@ -142,6 +143,11 @@ type roleAssignment struct {
 	Role  identifierContainer `json:"role"`
 }
 
+type connectorData struct {
+	// TokenInfo is cached for SSO groups
+	TokenInfo *tokenInfo `json:"tokenInfo"`
+}
+
 var (
 	_ connector.PasswordConnector = &conn{}
 	_ connector.RefreshConnector  = &conn{}
@@ -166,9 +172,6 @@ func (p *conn) Close() error { return nil }
 func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, password string) (identity connector.Identity, validPassword bool, err error) {
 	var token string
 	var tokenInfo *tokenInfo
-	fmt.Println("<=============")
-	fmt.Printf("username: %+v\n", username)
-	fmt.Printf("password: %+v\n", password)
 	if username == "" || username == "_TOKEN_" {
 		token = password
 		tokenInfo, err = p.getTokenInfo(ctx, token)
@@ -181,36 +184,14 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 			return identity, false, err
 		}
 	}
-	fmt.Printf("token: %+v\n", token)
-	fmt.Printf("tokenInfo: %+v\n", tokenInfo)
 
-	var userGroups []string
 	if p.groupsRequired(scopes.Groups) {
-		if scopes.Groups {
-			if tokenInfo.User.OSFederation != nil {
-				// For SSO users, use the groups passed down through the federation API.
-				for _, osGroup := range tokenInfo.User.OSFederation.Groups {
-					if len(osGroup.Name) > 0 {
-						userGroups = append(userGroups, osGroup.Name)
-					}
-				}
-			} else {
-				// For local users, fetch the groups stored in Keystone.
-				userGroups, err = p.getUserGroups(ctx, tokenInfo.User.ID, token)
-				if err != nil {
-					return identity, false, err
-				}
-			}
-		}
-		if p.UseRolesAsGroups {
-			roleGroups, err := p.getUserRolesAsGroups(ctx, token, tokenInfo.User.ID, "")
-			if err != nil {
-				return connector.Identity{}, false, err
-			}
-			userGroups = append(userGroups, roleGroups...)
+		var err error
+		identity.Groups, err = p.getGroups(ctx, token, tokenInfo)
+		if err != nil {
+			return connector.Identity{}, false, err
 		}
 	}
-	identity.Groups = p.filterGroups(pruneDuplicates(userGroups))
 	identity.Username = tokenInfo.User.Name
 	identity.UserID = tokenInfo.User.ID
 
@@ -222,10 +203,14 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 		identity.Email = user.User.Email
 		identity.EmailVerified = true
 	}
-	fmt.Printf("user: %+v\n", user)
 
-	fmt.Printf("identity: %+v\n", identity)
-	fmt.Println("=============>")
+	data := connectorData{TokenInfo: tokenInfo}
+	connData, err := json.Marshal(data)
+	if err != nil {
+		return identity, false, fmt.Errorf("marshal connector data: %v", err)
+	}
+	identity.ConnectorData = connData
+
 	return identity, true, nil
 }
 
@@ -238,6 +223,7 @@ func (p *conn) Refresh(
 	if err != nil {
 		return identity, fmt.Errorf("keystone: failed to obtain admin token: %v", err)
 	}
+
 	ok, err := p.checkIfUserExists(ctx, identity.UserID, token)
 	if err != nil {
 		return identity, err
@@ -245,12 +231,18 @@ func (p *conn) Refresh(
 	if !ok {
 		return identity, fmt.Errorf("keystone: user %q does not exist", identity.UserID)
 	}
-	if scopes.Groups {
-		groups, err := p.getUserGroups(ctx, identity.UserID, token)
+
+	if p.groupsRequired(scopes.Groups) {
+		var data connectorData
+		if err := json.Unmarshal(identity.ConnectorData, &data); err != nil {
+			return identity, fmt.Errorf("github: unmarshal access token: %v", err)
+		}
+
+		var err error
+		identity.Groups, err = p.getGroups(ctx, token, data.TokenInfo)
 		if err != nil {
 			return identity, err
 		}
-		identity.Groups = groups
 	}
 	return identity, nil
 }
@@ -323,6 +315,40 @@ func (p *conn) checkIfUserExists(ctx context.Context, userID string, token strin
 	return user != nil, err
 }
 
+func (p *conn) getGroups(ctx context.Context, token string, tokenInfo *tokenInfo) ([]string, error) {
+	var userGroups []string
+	var userGroupIDs []string
+	if tokenInfo.User.OSFederation != nil {
+		// For SSO users, use the groups passed down through the federation API.
+		for _, osGroup := range tokenInfo.User.OSFederation.Groups {
+			if len(osGroup.Name) > 0 {
+				userGroups = append(userGroups, osGroup.Name)
+			}
+			userGroupIDs = append(userGroupIDs, osGroup.ID)
+		}
+	} else {
+		// For local users, fetch the groups stored in Keystone.
+		localGroups, err := p.getUserGroups(ctx, tokenInfo.User.ID, token)
+		if err != nil {
+			return nil, err
+		}
+		for _, localGroup := range localGroups {
+			if len(localGroup.Name) > 0 {
+				userGroups = append(userGroups, localGroup.Name)
+			}
+			userGroupIDs = append(userGroupIDs, localGroup.ID)
+		}
+	}
+	if p.UseRolesAsGroups {
+		roleGroups, err := p.getUserRolesAsGroups(ctx, token, tokenInfo.User.ID, userGroupIDs, "")
+		if err != nil {
+			return nil, err
+		}
+		userGroups = append(userGroups, roleGroups...)
+	}
+	return p.filterGroups(pruneDuplicates(userGroups)), nil
+}
+
 func (p *conn) getUser(ctx context.Context, userID string, token string) (*userResponse, error) {
 	// https://developer.openstack.org/api-ref/identity/v3/#show-user-details
 	userURL := p.Host + "/v3/users/" + userID
@@ -392,7 +418,7 @@ func (p *conn) getTokenInfo(ctx context.Context, token string) (*tokenInfo, erro
 	return &tokenResp.Token, nil
 }
 
-func (p *conn) getUserGroups(ctx context.Context, userID string, token string) ([]string, error) {
+func (p *conn) getUserGroups(ctx context.Context, userID string, token string) ([]keystoneGroup, error) {
 	client := &http.Client{}
 	// https://developer.openstack.org/api-ref/identity/v3/#list-groups-to-which-a-user-belongs
 	groupsURL := p.Host + "/v3/users/" + userID + "/groups"
@@ -420,12 +446,7 @@ func (p *conn) getUserGroups(ctx context.Context, userID string, token string) (
 	if err != nil {
 		return nil, err
 	}
-
-	groups := make([]string, len(groupsResp.Groups))
-	for i, group := range groupsResp.Groups {
-		groups[i] = group.Name
-	}
-	return groups, nil
+	return groupsResp.Groups, nil
 }
 
 func (p *conn) groupsRequired(groupScope bool) bool {
@@ -433,11 +454,27 @@ func (p *conn) groupsRequired(groupScope bool) bool {
 }
 
 // If project ID is left empty, all roles will be fetched
-func (p *conn) getUserRolesAsGroups(ctx context.Context, token string, userID string, projectID string) ([]string, error) {
-	roleAssignments, err := p.getRoleAssignments(ctx, token, userID, projectID)
+func (p *conn) getUserRolesAsGroups(ctx context.Context, token string, userID string, groupIDs []string, projectID string) ([]string, error) {
+	// Get user-related role assignments
+	roleAssignments, err := p.getRoleAssignments(ctx, token, getRoleAssignmentsOptions{
+		userID:    userID,
+		projectID: projectID,
+	})
 	if err != nil {
 		return nil, err
 	}
+	// Get group-related role assignments
+	for _, groupID := range groupIDs {
+		groupRoleAssignments, err := p.getRoleAssignments(ctx, token, getRoleAssignmentsOptions{
+			groupID:   groupID,
+			projectID: projectID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		roleAssignments = append(roleAssignments, groupRoleAssignments...)
+	}
+
 	roles, err := p.getRoles(ctx, token)
 	if err != nil {
 		return nil, err
@@ -458,9 +495,23 @@ func (p *conn) getUserRolesAsGroups(ctx context.Context, token string, userID st
 	return groups, nil
 }
 
-func (p *conn) getRoleAssignments(ctx context.Context, token string, userID string, projectID string) ([]roleAssignment, error) {
+type getRoleAssignmentsOptions struct {
+	userID    string
+	groupID   string
+	projectID string
+}
+
+func (p *conn) getRoleAssignments(ctx context.Context, token string, opts getRoleAssignmentsOptions) ([]roleAssignment, error) {
+	endpoint := fmt.Sprintf("%s/v3/role_assignments?&scope.project.id=%s", p.Host, opts.projectID)
+	// note: group and user filters are mutually exclusive
+	if len(opts.userID) > 0 {
+		endpoint = fmt.Sprintf("%s&effective&user.id=%s", endpoint, opts.userID)
+	} else if len(opts.groupID) > 0 {
+		endpoint = fmt.Sprintf("%s&group.id=%s", endpoint, opts.groupID)
+	}
+
 	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail#list-role-assignments
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/v3/role_assignments?effective&user.id=%s&scope.project.id=%s", p.Host, userID, projectID), nil)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +519,7 @@ func (p *conn) getRoleAssignments(ctx context.Context, token string, userID stri
 	req = req.WithContext(ctx)
 	resp, err := p.client.Do(req)
 	if err != nil {
-		p.Logger.Errorf("keystone: error while fetching user %q groups\n", userID)
+		p.Logger.Errorf("keystone: error while fetching role assignments: %v", err)
 		return nil, err
 	}
 
@@ -486,6 +537,7 @@ func (p *conn) getRoleAssignments(ctx context.Context, token string, userID stri
 	if err != nil {
 		return nil, err
 	}
+
 	return roleAssignmentResp.RoleAssignments, nil
 }
 
