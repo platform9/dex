@@ -235,7 +235,7 @@ func (p *conn) Refresh(
 	if p.groupsRequired(scopes.Groups) {
 		var data connectorData
 		if err := json.Unmarshal(identity.ConnectorData, &data); err != nil {
-			return identity, fmt.Errorf("github: unmarshal access token: %v", err)
+			return identity, fmt.Errorf("keystone: unmarshal token info: %v", err)
 		}
 
 		var err error
