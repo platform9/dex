@@ -331,27 +331,52 @@ func (p *conn) checkIfUserExists(ctx context.Context, userID string, token strin
 func (p *conn) getGroups(ctx context.Context, token string, tokenInfo *tokenInfo) ([]string, error) {
 	var userGroups []string
 	var userGroupIDs []string
+
+	allGroups, err := p.getAllGroups(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+
+	// For SSO users, use the groups passed down through the federation API.
 	if tokenInfo.User.OSFederation != nil {
-		// For SSO users, use the groups passed down through the federation API.
 		for _, osGroup := range tokenInfo.User.OSFederation.Groups {
-			if len(osGroup.Name) > 0 {
-				userGroups = append(userGroups, osGroup.Name)
+			// In case the group details are missing, fetch the details of it from the list of groups.
+			if len(osGroup.Name) == 0 {
+				var ok bool
+				osGroup, ok = findGroupByID(allGroups, osGroup.ID)
+				if !ok {
+					p.Logger.Warnf("Group with ID '%s' attached to user '%s' could not be found. Skipping.",
+						osGroup.ID, tokenInfo.User.ID)
+					continue
+				}
 			}
+			userGroups = append(userGroups, osGroup.Name)
 			userGroupIDs = append(userGroupIDs, osGroup.ID)
 		}
-	} else {
-		// For local users, fetch the groups stored in Keystone.
-		localGroups, err := p.getUserGroups(ctx, tokenInfo.User.ID, token)
-		if err != nil {
-			return nil, err
-		}
-		for _, localGroup := range localGroups {
-			if len(localGroup.Name) > 0 {
-				userGroups = append(userGroups, localGroup.Name)
-			}
-			userGroupIDs = append(userGroupIDs, localGroup.ID)
-		}
 	}
+
+	// For local users, fetch the groups stored in Keystone.
+	localGroups, err := p.getUserGroups(ctx, tokenInfo.User.ID, token)
+	if err != nil {
+		return nil, err
+	}
+	for _, localGroup := range localGroups {
+		// In case the group details are missing, fetch the details of it from the list of groups.
+		if len(localGroup.Name) == 0 {
+			var ok bool
+			localGroup, ok = findGroupByID(allGroups, localGroup.ID)
+			if !ok {
+				p.Logger.Warnf("Group with ID '%s' attached to user '%s' could not be found. Skipping.",
+					localGroup.ID, tokenInfo.User.ID)
+				continue
+			}
+		}
+		userGroups = append(userGroups, localGroup.Name)
+		userGroupIDs = append(userGroupIDs, localGroup.ID)
+	}
+
+	// If enabled, also fetch the project roles of the user and groups, and
+	// treat the roles as groups.
 	if p.UseRolesAsGroups {
 		roleGroups, err := p.getUserRolesAsGroups(ctx, token, tokenInfo.User.ID, userGroupIDs, "")
 		if err != nil {
@@ -359,6 +384,7 @@ func (p *conn) getGroups(ctx context.Context, token string, tokenInfo *tokenInfo
 		}
 		userGroups = append(userGroups, roleGroups...)
 	}
+
 	return p.filterGroups(pruneDuplicates(userGroups)), nil
 }
 
@@ -429,6 +455,36 @@ func (p *conn) getTokenInfo(ctx context.Context, token string) (*tokenInfo, erro
 	}
 
 	return &tokenResp.Token, nil
+}
+
+func (p *conn) getAllGroups(ctx context.Context, token string) ([]keystoneGroup, error) {
+	// https://docs.openstack.org/api-ref/identity/v3/?expanded=list-groups-detail#list-groups
+	groupsURL := p.Host + "/v3/groups"
+	req, err := http.NewRequest(http.MethodGet, groupsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Auth-Token", token)
+	req = req.WithContext(ctx)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		p.Logger.Errorf("keystone: error while fetching groups\n")
+		return nil, err
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	groupsResp := new(groupsResponse)
+
+	err = json.Unmarshal(data, &groupsResp)
+	if err != nil {
+		return nil, err
+	}
+	return groupsResp.Groups, nil
 }
 
 func (p *conn) getUserGroups(ctx context.Context, userID string, token string) ([]keystoneGroup, error) {
@@ -600,8 +656,8 @@ func (p *conn) filterGroups(groups []string) []string {
 			if len(filter.Replace) > 0 {
 				group = filter.Replace
 			}
-			matches = append(matches, group)
 		}
+		matches = append(matches, group)
 	}
 	return matches
 }
@@ -617,4 +673,13 @@ func pruneDuplicates(ss []string) []string {
 		ns = append(ns, s)
 	}
 	return ns
+}
+
+func findGroupByID(groups []keystoneGroup, groupID string) (group keystoneGroup, ok bool) {
+	for _, group := range groups {
+		if group.ID == groupID {
+			return group, true
+		}
+	}
+	return group, false
 }
