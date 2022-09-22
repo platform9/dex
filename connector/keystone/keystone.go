@@ -241,9 +241,10 @@ func (p *conn) Refresh(
 	if err := json.Unmarshal(identity.ConnectorData, &data); err != nil {
 		return identity, fmt.Errorf("keystone: unmarshal token info: %v", err)
 	}
-	// If there is a token associated with this refresh token, use that to look up the info.
+	// If there is a token associated with this refresh token, use that to look up
+	// the token info. This can contain things like SSO groups which are not present elsewhere.
 	if len(data.Token) > 0 {
-		tokenInfo, err = p.getTokenInfo(ctx, token)
+		tokenInfo, err = p.getTokenInfo(ctx, data.Token)
 		if err != nil {
 			return identity, err
 		}
