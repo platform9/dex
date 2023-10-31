@@ -28,6 +28,7 @@ RUN mkdir -p /var/dex
 RUN mkdir -p /etc/dex
 COPY config.docker.yaml /etc/dex/
 
+
 FROM alpine:3.18.4 AS gomplate
 
 ARG TARGETOS
