@@ -728,6 +728,8 @@ func (p *conn) getRoleAssignments(ctx context.Context, token string, opts getRol
 	// note: group and user filters are mutually exclusive
 	if len(opts.userID) > 0 {
 		endpoint = fmt.Sprintf("%seffective&user.id=%s", endpoint, opts.userID)
+	} else if len(opts.groupID) > 0 {
+		endpoint = fmt.Sprintf("%sgroup.id=%s", endpoint, opts.groupID)
 	}
 
 	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail#list-role-assignments
