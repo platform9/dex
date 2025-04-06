@@ -584,7 +584,10 @@ func (p *conn) generateGroupName(project project, role role, hostName string) st
 	if hostName != "" {
 		return hostName + "-" + p.Domain.Name + "-" + project.Name + "-" + roleName
 	}
-	return p.Domain.Name + "-" + project.Name + "-" + roleName
+	domainName := strings.ToLower(strings.ReplaceAll(p.Domain.Name, "_", "-"))
+	projectName := strings.ToLower(strings.ReplaceAll(project.Name, "_", "-"))
+
+	return domainName + "-" + projectName + "-" + roleName
 }
 
 func (p *conn) getUser(ctx context.Context, userID string, token string) (*userResponse, error) {
