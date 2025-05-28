@@ -4,6 +4,7 @@ package keystone
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -64,10 +65,11 @@ type domainKeystone struct {
 //			keystonePassword: DEMO_PASS
 //			useRolesAsGroups: true
 type Config struct {
-	Domain        string `json:"domain"`
-	Host          string `json:"keystoneHost"`
-	AdminUsername string `json:"keystoneUsername"`
-	AdminPassword string `json:"keystonePassword"`
+	Domain             string `json:"domain"`
+	Host               string `json:"keystoneHost"`
+	AdminUsername      string `json:"keystoneUsername"`
+	AdminPassword      string `json:"keystonePassword"`
+	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
 }
 
 type loginRequestData struct {
@@ -177,13 +179,19 @@ func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error)
 	domain := domainKeystone{
 		Name: c.Domain,
 	}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: c.InsecureSkipVerify,
+		},
+	}
+	client := &http.Client{Transport: tr}
 	return &conn{
 		Domain:        domain,
 		Host:          c.Host,
 		AdminUsername: c.AdminUsername,
 		AdminPassword: c.AdminPassword,
 		Logger:        logger,
-		client:        http.DefaultClient,
+		client:        client,
 	}, nil
 }
 
