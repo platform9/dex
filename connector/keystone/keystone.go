@@ -23,6 +23,7 @@ type conn struct {
 	AdminPassword string
 	client        *http.Client
 	Logger        log.Logger
+	fqdn          string
 }
 
 // type group struct {
@@ -70,6 +71,7 @@ type Config struct {
 	AdminUsername      string `json:"keystoneUsername"`
 	AdminPassword      string `json:"keystonePassword"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	Fqdn               string `json:"fqdn"`
 }
 
 type loginRequestData struct {
@@ -192,6 +194,7 @@ func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error)
 		AdminPassword: c.AdminPassword,
 		Logger:        logger,
 		client:        client,
+		fqdn:          c.Fqdn,
 	}, nil
 }
 
@@ -546,10 +549,9 @@ func (p *conn) getGroups(ctx context.Context, token string, tokenInfo *tokenInfo
 	var roleGroups []string
 
 	// get the customer name to be prefixed in the group name
-	hostName, err := p.getHostname()
-	if err != nil {
-		return userGroups, err
-	}
+	// hostName, err := p.getHostname()
+	hostName := p.fqdn
+
 	for _, roleAssignment := range roleAssignments {
 		role, ok := roleMap[roleAssignment.Role.ID]
 		if !ok {
