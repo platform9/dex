@@ -187,9 +187,6 @@ func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error)
 		},
 	}
 	client := &http.Client{Transport: tr}
-	if c.CustomerName == "" {
-		return nil, fmt.Errorf("customerName is required in keystone config it cannot be empty")
-	}
 	return &conn{
 		Domain:        domain,
 		Host:          c.Host,
@@ -552,9 +549,14 @@ func (p *conn) getGroups(ctx context.Context, token string, tokenInfo *tokenInfo
 	var roleGroups []string
 
 	// get the customer name to be prefixed in the group name
-	// hostName, err := p.getHostname()
 	customerName := p.CustomerName
-
+	// if customerName is not provided in the keystone config get it from keystone host url.
+	if customerName == "" {
+		customerName, err = p.getHostname()
+		if err != nil {
+			return userGroups, err
+		}
+	}
 	for _, roleAssignment := range roleAssignments {
 		role, ok := roleMap[roleAssignment.Role.ID]
 		if !ok {
