@@ -23,7 +23,7 @@ type conn struct {
 	AdminPassword string
 	client        *http.Client
 	Logger        log.Logger
-	fqdn          string
+	CustomerName  string
 }
 
 // type group struct {
@@ -71,7 +71,7 @@ type Config struct {
 	AdminUsername      string `json:"keystoneUsername"`
 	AdminPassword      string `json:"keystonePassword"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
-	Fqdn               string `json:"fqdn"`
+	CustomerName       string `json:"customerName"`
 }
 
 type loginRequestData struct {
@@ -187,6 +187,9 @@ func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error)
 		},
 	}
 	client := &http.Client{Transport: tr}
+	if c.CustomerName == "" {
+		return nil, fmt.Errorf("customerName is required in keystone config it cannot be empty")
+	}
 	return &conn{
 		Domain:        domain,
 		Host:          c.Host,
@@ -194,7 +197,7 @@ func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error)
 		AdminPassword: c.AdminPassword,
 		Logger:        logger,
 		client:        client,
-		fqdn:          c.Fqdn,
+		CustomerName:  c.CustomerName,
 	}, nil
 }
 
@@ -550,7 +553,7 @@ func (p *conn) getGroups(ctx context.Context, token string, tokenInfo *tokenInfo
 
 	// get the customer name to be prefixed in the group name
 	// hostName, err := p.getHostname()
-	hostName := p.fqdn
+	customerName := p.CustomerName
 
 	for _, roleAssignment := range roleAssignments {
 		role, ok := roleMap[roleAssignment.Role.ID]
@@ -563,7 +566,7 @@ func (p *conn) getGroups(ctx context.Context, token string, tokenInfo *tokenInfo
 			// Ignore role assignments to non-existent projects (shouldn't happen)
 			continue
 		}
-		groupName := p.generateGroupName(project, role, hostName)
+		groupName := p.generateGroupName(project, role, customerName)
 		roleGroups = append(roleGroups, groupName)
 	}
 
@@ -586,15 +589,14 @@ func (p *conn) getHostname() (string, error) {
 	return hostName, nil
 }
 
-func (p *conn) generateGroupName(project project, role role, hostName string) string {
+func (p *conn) generateGroupName(project project, role role, customerName string) string {
 	roleName := role.Name
 	if roleName == "_member_" {
 		roleName = "member"
 	}
-	if hostName != "" {
-		return hostName + "-" + p.Domain.Name + "-" + project.Name + "-" + roleName
-	}
-	return p.Domain.Name + "-" + project.Name + "-" + roleName
+	domainName := strings.ToLower(strings.ReplaceAll(p.Domain.Name, "_", "-"))
+	projectName := strings.ToLower(strings.ReplaceAll(project.Name, "_", "-"))
+	return customerName + "-" + domainName + "-" + projectName + "-" + roleName
 }
 
 func (p *conn) getUser(ctx context.Context, userID string, token string) (*userResponse, error) {
