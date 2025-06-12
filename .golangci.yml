@@ -1,55 +1,61 @@
+version: 1
+
 run:
-    timeout: 4m
+  timeout: 4m
 
 linters-settings:
-    depguard:
-        list-type: blacklist
-        include-go-root: true
-        packages:
-            - io/ioutil
-        packages-with-error-message:
-            - io/ioutil: "The 'io/ioutil' package is deprecated. Use corresponding 'os' or 'io' functions instead."
-    gci:
-        local-prefixes: github.com/dexidp/dex
-    goimports:
-        local-prefixes: github.com/dexidp/dex
+  depguard:
+    include-go-root: true
+    reject:
+      - io/ioutil
+    ignore-generated: true
+    exclude-go-tests: false
 
+  gci:
+    custom-order:
+      - std
+      - default
+      - prefix(github.com/dexidp/dex)
+
+  goimports:
+    local-prefixes: github.com/dexidp/dex
 
 linters:
-    disable-all: true
-    enable:
-        - bodyclose
-        - deadcode
-        - depguard
-        - dogsled
-        - exhaustive
-        - exportloopref
-        - gci
-        - gochecknoinits
-        - gocritic
-        - gofmt
-        - gofumpt
-        - goimports
-        - goprintffuncname
-        - gosimple
-        - govet
-        - ineffassign
-        - misspell
-        - nakedret
-        - nolintlint
-        - prealloc
-        - revive
-        - rowserrcheck
-        - sqlclosecheck
-        - staticcheck
-        - structcheck
-        - stylecheck
-        - tparallel
-        - unconvert
-        - unparam
-        - unused
-        - varcheck
-        - whitespace
+  disable-all: true
+  enable:
+    - bodyclose
+    - deadcode
+    - depguard
+    - dogsled
+    - exhaustive
+    - exportloopref
+    - gci
+    - gochecknoinits
+    - gocritic
+    - gofmt
+    - gofumpt
+    - goimports
+    - goprintffuncname
+    - gosimple
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - nolintlint
+    - prealloc
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - structcheck
+    - stylecheck
+    - tparallel
+    - unconvert
+    - unparam
+    - unused
+    - varcheck
+    - whitespace
+
 
         # Disable temporarily until everything works with Go 1.18
         # - typecheck
