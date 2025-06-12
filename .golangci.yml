@@ -6,16 +6,19 @@ run:
 linters-settings:
   depguard:
     include-go-root: true
-    reject:
+    packages:
       - io/ioutil
+    packages-with-error-message:
+      - io/ioutil: "The 'io/ioutil' package is deprecated. Use 'os' or 'io' packages instead."
     ignore-generated: true
     exclude-go-tests: false
 
   gci:
-    custom-order:
-      - std
-      - default
-      - prefix(github.com/dexidp/dex)
+    sections:
+      - Standard
+      - Default
+      - Prefix(github.com/dexidp/dex)
+    section-separator: "\n"
 
   goimports:
     local-prefixes: github.com/dexidp/dex
@@ -55,6 +58,7 @@ linters:
     - unused
     - varcheck
     - whitespace
+
 
 
         # Disable temporarily until everything works with Go 1.18
