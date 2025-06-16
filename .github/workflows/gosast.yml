@@ -34,7 +34,7 @@ jobs:
         -   name: Run gosec and save report
             run: |
                 set -e
-                gosec -fmt=json -severity=medium -out=gosec-report.json ./... || echo "⚠️ Gosec exited with non-zero code but report may still be available"
+                gosec -tags=integration -fmt=json -severity=medium -out=gosec-report.json ./... || echo "⚠️ Gosec exited with non-zero code but report may still be available"
 
         -   name: Check if gosec report exists
             run: |
