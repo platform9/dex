@@ -126,15 +126,26 @@ func newHTTPClient(rootCAs []string, insecureSkipVerify bool) (*http.Client, err
 		return nil, err
 	}
 
-	tlsConfig := tls.Config{RootCAs: pool, InsecureSkipVerify: insecureSkipVerify}
+	// tlsConfig := tls.Config{RootCAs: pool, InsecureSkipVerify: insecureSkipVerify}
 	for _, rootCA := range rootCAs {
 		rootCABytes, err := os.ReadFile(rootCA)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read root-ca: %v", err)
 		}
-		if !tlsConfig.RootCAs.AppendCertsFromPEM(rootCABytes) {
+		// if !tlsConfig.RootCAs.AppendCertsFromPEM(rootCABytes) {
+		if !pool.AppendCertsFromPEM(rootCABytes) {
 			return nil, fmt.Errorf("no certs found in root CA file %q", rootCA)
 		}
+	}
+
+	tlsConfig := tls.Config{
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS12,
+	}
+
+	if insecureSkipVerify {
+		// ⚠️ Warning: Avoid in production. Consider logging a warning here.
+		tlsConfig.InsecureSkipVerify = true
 	}
 
 	return &http.Client{

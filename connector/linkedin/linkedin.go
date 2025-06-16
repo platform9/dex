@@ -15,6 +15,7 @@ import (
 	"github.com/dexidp/dex/pkg/log"
 )
 
+//nolint:gosec,G101
 const (
 	apiURL   = "https://api.linkedin.com/v2"
 	authURL  = "https://www.linkedin.com/oauth/v2/authorization"

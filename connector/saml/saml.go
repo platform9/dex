@@ -24,7 +24,7 @@ import (
 	"github.com/dexidp/dex/pkg/log"
 )
 
-// nolint
+//nolint:gosec,G101
 const (
 	bindingRedirect = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
 	bindingPOST     = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"

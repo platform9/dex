@@ -254,7 +254,17 @@ func (c *Config) openConnector(logger log.Logger) (*ldapConnector, error) {
 		}
 	}
 
-	tlsConfig := &tls.Config{ServerName: host, InsecureSkipVerify: c.InsecureSkipVerify}
+	// tlsConfig := &tls.Config{ServerName: host, InsecureSkipVerify: c.InsecureSkipVerify}
+	tlsConfig := &tls.Config{
+		ServerName: host,
+		MinVersion: tls.VersionTLS12,
+	}
+
+	if c.InsecureSkipVerify {
+		logger.Warn("TLS certificate verification is disabled (InsecureSkipVerify=true). This should not be used in production.")
+		tlsConfig.InsecureSkipVerify = true
+	}
+
 	if c.RootCA != "" || len(c.RootCAData) != 0 {
 		data := c.RootCAData
 		if len(data) == 0 {

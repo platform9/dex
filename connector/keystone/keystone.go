@@ -178,13 +178,25 @@ var (
 
 // Open returns an authentication strategy using Keystone.
 func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error) {
+
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
 	domain := domainKeystone{
 		Name: c.Domain,
 	}
+
+	if c.InsecureSkipVerify {
+		logger.Warn("Insecure TLS is enabled (InsecureSkipVerify = true). This is unsafe for production.")
+		tlsConfig.InsecureSkipVerify = true
+	}
+	
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: c.InsecureSkipVerify,
-		},
+		// TLSClientConfig: &tls.Config{
+		// 	InsecureSkipVerify: c.InsecureSkipVerify,
+		// },
+		TLSClientConfig: tlsConfig,
 	}
 	client := &http.Client{Transport: tr}
 	return &conn{

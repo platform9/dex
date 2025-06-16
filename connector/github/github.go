@@ -210,7 +210,7 @@ func (e *oauth2Error) Error() string {
 
 // newHTTPClient returns a new HTTP client that trusts the custom declared rootCA cert.
 func newHTTPClient(rootCA string) (*http.Client, error) {
-	tlsConfig := tls.Config{RootCAs: x509.NewCertPool()}
+	tlsConfig := tls.Config{RootCAs: x509.NewCertPool(),MinVersion: tls.VersionTLS12,}
 	rootCABytes, err := os.ReadFile(rootCA)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read root-ca: %v", err)

@@ -478,6 +478,7 @@ func getInClusterConfigNamespace(token, namespaceENV, namespacePath string) (str
 }
 
 func inClusterConfig() (k8sapi.Cluster, k8sapi.AuthInfo, string, error) {
+	//nolint:gosec,G101
 	const (
 		serviceAccountPath          = "/var/run/secrets/kubernetes.io/serviceaccount/"
 		serviceAccountTokenPath     = serviceAccountPath + "token"

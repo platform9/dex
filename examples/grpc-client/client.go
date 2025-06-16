@@ -33,6 +33,7 @@ func newDexClient(hostAndPort, caPath, clientCrt, clientKey string) (api.DexClie
 	clientTLSConfig := &tls.Config{
 		RootCAs:      cPool,
 		Certificates: []tls.Certificate{clientCert},
+		MinVersion: tls.VersionTLS12,
 	}
 	creds := credentials.NewTLS(clientTLSConfig)
 

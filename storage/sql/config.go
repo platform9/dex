@@ -317,7 +317,7 @@ func (s *MySQL) open(logger log.Logger) (*conn, error) {
 }
 
 func (s *MySQL) makeTLSConfig() error {
-	cfg := &tls.Config{}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12,}
 	if s.SSL.CAFile != "" {
 		rootCertPool := x509.NewCertPool()
 		pem, err := os.ReadFile(s.SSL.CAFile)

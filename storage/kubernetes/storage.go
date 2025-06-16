@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
+
+	// "math/rand"
+	"crypto/rand"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -734,7 +737,13 @@ func retryOnConflict(ctx context.Context, action func() error) error {
 	attempts := 0
 	getNextStep := func() time.Duration {
 		step := policy[attempts]
-		return time.Duration(step*5+rand.Intn(step)) * time.Microsecond
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(step)))
+		if err != nil {
+			n = big.NewInt(0)
+		}
+		jitter := int(n.Int64())
+		return time.Duration(step*5+jitter) * time.Microsecond
+		// return time.Duration(step*5+rand.Intn(step)) * time.Microsecond
 	}
 
 	if err := action(); err == nil || !isKubernetesAPIConflictError(err) {

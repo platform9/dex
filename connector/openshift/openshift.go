@@ -265,11 +265,13 @@ func validateAllowedGroups(userGroups, allowedGroups []string) bool {
 
 // newHTTPClient returns a new HTTP client
 func newHTTPClient(insecureCA bool, rootCA string) (*http.Client, error) {
-	tlsConfig := tls.Config{}
+	tlsConfig := tls.Config{MinVersion: tls.VersionTLS12,}
 	if insecureCA {
-		tlsConfig = tls.Config{InsecureSkipVerify: true}
+		// tlsConfig = tls.Config{InsecureSkipVerify: true}
+		tlsConfig.InsecureSkipVerify = true
 	} else if rootCA != "" {
-		tlsConfig = tls.Config{RootCAs: x509.NewCertPool()}
+		// tlsConfig = tls.Config{RootCAs: x509.NewCertPool(),}
+		tlsConfig.RootCAs = x509.NewCertPool()
 		rootCABytes, err := os.ReadFile(rootCA)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read root-ca: %w", err)

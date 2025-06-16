@@ -127,7 +127,7 @@ func (m *MySQL) dsn(tlsConfig string) string {
 }
 
 func (m *MySQL) makeTLSConfig() error {
-	cfg := &tls.Config{}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12,}
 
 	if m.SSL.CAFile != "" {
 		rootCertPool := x509.NewCertPool()
