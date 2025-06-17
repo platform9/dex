@@ -23,19 +23,27 @@ jobs:
             with:
                 go-version-file: 'go.mod'
 
+        -   name: Cache Go modules
+            uses: actions/cache@v3
+            with:
+                path: |
+                    ~/.cache/go-build
+                    ~/go/pkg/mod
+                key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+                restore-keys: |
+                    ${{ runner.os }}-go-
+
+        -   name: Tidy Go modules
+            run: go mod tidy
+
+        -   name: Generate Ent code
+            run: go generate ./...
+
         -   name: Install gosec
             run: |
                 go install github.com/securego/gosec/v2/cmd/gosec@v2.17.0
                 echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
                 gosec -h  # Debug step: check if gosec is installed
-
-        -   name: Generate Ent code
-            run: |
-                go generate ./...
-
-        -   name: Build project (pre-Gosec sanity)
-            run: |
-                go build ./...
 
         # -   name: Run gosec
         #     run: gosec ./...
