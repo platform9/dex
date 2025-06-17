@@ -1,0 +1,364 @@
+{
+	"Golang errors": {},
+	"Issues": [
+		{
+			"severity": "HIGH",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "295",
+				"url": "https://cwe.mitre.org/data/definitions/295.html"
+			},
+			"rule_id": "G402",
+			"details": "TLS InsecureSkipVerify set true.",
+			"file": "/home/runner/work/dex/dex/connector/openshift/openshift.go",
+			"code": "270: \t\t// tlsConfig = tls.Config{InsecureSkipVerify: true}\n271: \t\ttlsConfig.InsecureSkipVerify = true\n272: \t} else if rootCA != \"\" {\n",
+			"line": "271",
+			"column": "34",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "295",
+				"url": "https://cwe.mitre.org/data/definitions/295.html"
+			},
+			"rule_id": "G402",
+			"details": "TLS InsecureSkipVerify set true.",
+			"file": "/home/runner/work/dex/dex/connector/oauth/oauth.go",
+			"code": "147: \t\t// ⚠️ Warning: Avoid in production. Consider logging a warning here.\n148: \t\ttlsConfig.InsecureSkipVerify = true\n149: \t}\n",
+			"line": "148",
+			"column": "34",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "LOW",
+			"cwe": {
+				"id": "798",
+				"url": "https://cwe.mitre.org/data/definitions/798.html"
+			},
+			"rule_id": "G101",
+			"details": "Potential hardcoded credentials",
+			"file": "/home/runner/work/dex/dex/connector/saml/saml.go",
+			"code": "45: \t// subject confirmation methods\n46: \tsubjectConfirmationMethodBearer = \"urn:oasis:names:tc:SAML:2.0:cm:bearer\"\n47: \n",
+			"line": "46",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "HIGH",
+			"confidence": "LOW",
+			"cwe": {
+				"id": "798",
+				"url": "https://cwe.mitre.org/data/definitions/798.html"
+			},
+			"rule_id": "G101",
+			"details": "Potential hardcoded credentials",
+			"file": "/home/runner/work/dex/dex/connector/linkedin/linkedin.go",
+			"code": "21: \tauthURL  = \"https://www.linkedin.com/oauth/v2/authorization\"\n22: \ttokenURL = \"https://www.linkedin.com/oauth/v2/accessToken\"\n23: )\n",
+			"line": "22",
+			"column": "2",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "676",
+				"url": "https://cwe.mitre.org/data/definitions/676.html"
+			},
+			"rule_id": "G114",
+			"details": "Use of net/http serve function that has no support for setting timeouts",
+			"file": "/home/runner/work/dex/dex/examples/example-app/main.go",
+			"code": "187: \t\t\t\tlog.Printf(\"listening on %s\", listen)\n188: \t\t\t\treturn http.ListenAndServeTLS(listenURL.Host, tlsCert, tlsKey, nil)\n189: \t\t\tdefault:\n",
+			"line": "188",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "676",
+				"url": "https://cwe.mitre.org/data/definitions/676.html"
+			},
+			"rule_id": "G114",
+			"details": "Use of net/http serve function that has no support for setting timeouts",
+			"file": "/home/runner/work/dex/dex/examples/example-app/main.go",
+			"code": "184: \t\t\t\tlog.Printf(\"listening on %s\", listen)\n185: \t\t\t\treturn http.ListenAndServe(listenURL.Host, nil)\n186: \t\t\tcase \"https\":\n",
+			"line": "185",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "LOW",
+			"cwe": {
+				"id": "79",
+				"url": "https://cwe.mitre.org/data/definitions/79.html"
+			},
+			"rule_id": "G203",
+			"details": "The used method does not auto-escape HTML. This can potentially lead to 'Cross-site Scripting' vulnerabilities, in case the attacker controls the input.",
+			"file": "/home/runner/work/dex/dex/server/handlers.go",
+			"code": "178: \t\t\tType: conn.Type,\n179: \t\t\tURL:  template.URL(connURL.String()),\n180: \t\t}\n",
+			"line": "179",
+			"column": "10",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "78",
+				"url": "https://cwe.mitre.org/data/definitions/78.html"
+			},
+			"rule_id": "G204",
+			"details": "Subprocess launched with variable",
+			"file": "/home/runner/work/dex/dex/cmd/docker-entrypoint/main.go",
+			"code": "39: \n40: \tif err := syscall.Exec(argv0, args, os.Environ()); err != nil {\n41: \t\treturn fmt.Errorf(\"cannot exec command %s (%q): %w\", args, argv0, err)\n",
+			"line": "40",
+			"column": "12",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "78",
+				"url": "https://cwe.mitre.org/data/definitions/78.html"
+			},
+			"rule_id": "G204",
+			"details": "Subprocess launched with a potential tainted input or cmd arguments",
+			"file": "/home/runner/work/dex/dex/cmd/docker-entrypoint/main.go",
+			"code": "28: \tif fork {\n29: \t\tif output, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil {\n30: \t\t\treturn fmt.Errorf(\"cannot fork/exec command %s: %w (output: %q)\", args, err, string(output))\n",
+			"line": "29",
+			"column": "21",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/home/runner/work/dex/dex/storage/kubernetes/client.go",
+			"code": "451: func namespaceFromFile(path string) (string, error) {\n452: \tdata, err := os.ReadFile(path)\n453: \tif err != nil {\n",
+			"line": "452",
+			"column": "15",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/home/runner/work/dex/dex/storage/kubernetes/client.go",
+			"code": "405: func loadKubeConfig(kubeConfigPath string) (cluster k8sapi.Cluster, user k8sapi.AuthInfo, namespace string, err error) {\n406: \tdata, err := os.ReadFile(kubeConfigPath)\n407: \tif err != nil {\n",
+			"line": "406",
+			"column": "15",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/home/runner/work/dex/dex/storage/kubernetes/client.go",
+			"code": "338: \t\t}\n339: \t\treturn os.ReadFile(file)\n340: \t}\n",
+			"line": "339",
+			"column": "10",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/home/runner/work/dex/dex/examples/grpc-client/client.go",
+			"code": "19: \tcPool := x509.NewCertPool()\n20: \tcaCert, err := os.ReadFile(caPath)\n21: \tif err != nil {\n",
+			"line": "20",
+			"column": "17",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/home/runner/work/dex/dex/examples/example-app/main.go",
+			"code": "44: \ttlsConfig := tls.Config{RootCAs: x509.NewCertPool(),MinVersion: tls.VersionTLS12,}\n45: \trootCABytes, err := os.ReadFile(rootCAs)\n46: \tif err != nil {\n",
+			"line": "45",
+			"column": "22",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/home/runner/work/dex/dex/connector/openshift/openshift.go",
+			"code": "274: \t\ttlsConfig.RootCAs = x509.NewCertPool()\n275: \t\trootCABytes, err := os.ReadFile(rootCA)\n276: \t\tif err != nil {\n",
+			"line": "275",
+			"column": "23",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/home/runner/work/dex/dex/connector/oauth/oauth.go",
+			"code": "130: \tfor _, rootCA := range rootCAs {\n131: \t\trootCABytes, err := os.ReadFile(rootCA)\n132: \t\tif err != nil {\n",
+			"line": "131",
+			"column": "23",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/home/runner/work/dex/dex/connector/google/google.go",
+			"code": "301: \t} else {\n302: \t\tjsonCredentials, err = os.ReadFile(serviceAccountFilePath)\n303: \t\tif err != nil {\n",
+			"line": "302",
+			"column": "26",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/home/runner/work/dex/dex/connector/github/github.go",
+			"code": "213: \ttlsConfig := tls.Config{RootCAs: x509.NewCertPool(),MinVersion: tls.VersionTLS12,}\n214: \trootCABytes, err := os.ReadFile(rootCA)\n215: \tif err != nil {\n",
+			"line": "214",
+			"column": "22",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "HIGH",
+			"cwe": {
+				"id": "22",
+				"url": "https://cwe.mitre.org/data/definitions/22.html"
+			},
+			"rule_id": "G304",
+			"details": "Potential file inclusion via variable",
+			"file": "/home/runner/work/dex/dex/cmd/dex/serve.go",
+			"code": "79: \tconfigFile := options.config\n80: \tconfigData, err := os.ReadFile(configFile)\n81: \tif err != nil {\n",
+			"line": "80",
+			"column": "21",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "LOW",
+			"cwe": {
+				"id": "400",
+				"url": "https://cwe.mitre.org/data/definitions/400.html"
+			},
+			"rule_id": "G112",
+			"details": "Potential Slowloris Attack because ReadHeaderTimeout is not configured in the http.Server",
+			"file": "/home/runner/work/dex/dex/cmd/dex/serve.go",
+			"code": "437: \n438: \t\tserver := \u0026http.Server{\n439: \t\t\tHandler: serv,\n440: \t\t\tTLSConfig: \u0026tls.Config{\n441: \t\t\t\tCipherSuites:             allowedTLSCiphers,\n442: \t\t\t\tPreferServerCipherSuites: true,\n443: \t\t\t\tMinVersion:               tls.VersionTLS12,\n444: \t\t\t},\n445: \t\t}\n446: \t\tdefer server.Close()\n",
+			"line": "438-445",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "LOW",
+			"cwe": {
+				"id": "400",
+				"url": "https://cwe.mitre.org/data/definitions/400.html"
+			},
+			"rule_id": "G112",
+			"details": "Potential Slowloris Attack because ReadHeaderTimeout is not configured in the http.Server",
+			"file": "/home/runner/work/dex/dex/cmd/dex/serve.go",
+			"code": "408: \n409: \t\tserver := \u0026http.Server{\n410: \t\t\tHandler: serv,\n411: \t\t}\n412: \t\tdefer server.Close()\n",
+			"line": "409-411",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		},
+		{
+			"severity": "MEDIUM",
+			"confidence": "LOW",
+			"cwe": {
+				"id": "400",
+				"url": "https://cwe.mitre.org/data/definitions/400.html"
+			},
+			"rule_id": "G112",
+			"details": "Potential Slowloris Attack because ReadHeaderTimeout is not configured in the http.Server",
+			"file": "/home/runner/work/dex/dex/cmd/dex/serve.go",
+			"code": "379: \n380: \t\tserver := \u0026http.Server{\n381: \t\t\tHandler: telemetryRouter,\n382: \t\t}\n383: \t\tdefer server.Close()\n",
+			"line": "380-382",
+			"column": "14",
+			"nosec": false,
+			"suppressions": null
+		}
+	],
+	"Stats": {
+		"files": 186,
+		"lines": 66257,
+		"nosec": 0,
+		"found": 22
+	},
+	"GosecVersion": "dev"
+}
