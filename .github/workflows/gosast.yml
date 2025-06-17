@@ -7,135 +7,110 @@ on:
       branches: ["private/soc2"]
 
 jobs:
-    # gosec:
-    #     name: Static Code Analysis (gosec)
-    #     runs-on: ubuntu-latest
-    #     continue-on-error: true
-    #     outputs:
-    #         gosec-high-found: ${{ steps.check.outputs.gosec-high-found }}
-
-    #     steps:
-    #     -   name: Checkout code
-    #         uses: actions/checkout@v3
-
-    #     -   name: Set up Go
-    #         uses: actions/setup-go@v4
-    #         with:
-    #             go-version-file: 'go.mod'
-
-    #     -   name: Cache Go modules
-    #         uses: actions/cache@v3
-    #         with:
-    #             path: |
-    #                 ~/.cache/go-build
-    #                 ~/go/pkg/mod
-    #             key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-    #             restore-keys: |
-    #                 ${{ runner.os }}-go-
-
-    #     -   name: Tidy Go modules
-    #         run: go mod tidy
-
-    #     -   name: Generate Ent code
-    #         run: go generate ./...
-
-    #     -   name: Install gosec
-    #         run: |
-    #             go install github.com/securego/gosec/v2/cmd/gosec@v2.17.0
-    #             echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-    #             gosec -h  # Debug step: check if gosec is installed
-
-    #     # -   name: Run gosec
-    #     #     run: gosec ./...
-    #     -   name: Run gosec and save report
-    #         run: |
-    #             set -e
-    #             gosec -fmt=json -severity=medium -out=gosec-report.json ./... || echo "⚠️ Gosec exited with non-zero code but report may still be available"
-
-    #     -   name: Check if gosec report exists
-    #         run: |
-    #             if [ ! -f gosec-report.json ]; then
-    #               echo "❌ Gosec report not found."
-    #               exit 1
-    #             fi
-
-    #     -   name: Upload gosec Report
-    #         uses: actions/upload-artifact@v4
-    #         with:
-    #             name: gosec-report
-    #             path: gosec-report.json
-
-    #     -   name: Show Gosec Report in Logs
-    #         run: cat gosec-report.json
-
-    #     -   name: Check for High Severity Issues
-    #         id: check
-    #         run: |
-    #           count=$(jq '[.Issues[] | select(.severity == "HIGH" or .severity == "CRITICAL")] | length' gosec-report.json)
-    #           echo "gosec-high-found=$([[ $count -gt 0 ]] && echo true || echo false)" >> $GITHUB_OUTPUT
-
-    #     -   name: Fail if High/Critical Vulnerabilities Found
-    #         if: steps.check.outputs.gosec-high-found == 'true'
-    #         run: |
-    #             echo "❌ High/Critical vulnerabilities found. Failing the job."
-    #             exit 1
-
     gosec:
         name: Static Code Analysis (gosec)
         runs-on: ubuntu-latest
         continue-on-error: true
         outputs:
-            gosec-high-found: '${{ steps.check.outputs.gosec-high-found }}'
+            gosec-high-found: ${{ steps.check.outputs.gosec-high-found }}
         steps:
-            -   name: Checkout code
-                uses: actions/checkout@v3
-            -   name: Set up Go
-                uses: actions/setup-go@v4
-                with:
-                    go-version-file: go.mod
-            -   name: Tidy and Download Go Modules
-                run: |
-                    go mod tidy
-                    go mod download
-            -   name: Install Ent and Gosec
-                run: |
-                    go install entgo.io/ent/cmd/ent@v0.11.2
-                    go install github.com/securego/gosec/v2/cmd/gosec@v2.17.0
-                    echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-            -   name: Build project to warm up Go type system
-                run: go build ./...
-            -   name: Generate Ent code
-                run: ent generate ./storage/ent
-            -   name: Run gosec and save report
-                run: >
-                    gosec -fmt=json -severity=medium -out=gosec-report.json ./... || echo
-                    "⚠️ Gosec exited with non-zero code but report may still be available"
-            -   name: Check if gosec report exists
-                run: |
-                    if [ ! -f gosec-report.json ]; then
-                    echo "❌ Gosec report not found."
-                    exit 1
-                    fi
-            -   name: Upload gosec Report
-                uses: actions/upload-artifact@v4
-                with:
-                    name: gosec-report
-                    path: gosec-report.json
-            -   name: Show Gosec Report in Logs
-                run: cat gosec-report.json
-            -   name: Check for High Severity Issues
-                id: check
-                run: >
-                    count=$(jq '[.Issues[] | select(.severity == "HIGH" or .severity ==
-                    "CRITICAL")] | length' gosec-report.json)
+        -   name: Checkout code
+            uses: actions/checkout@v3
+        -   name: Set up Go
+            uses: actions/setup-go@v4
+            with:
+                go-version-file: 'go.mod'
+        -   name: Install gosec
+            run: |
+                go install github.com/securego/gosec/v2/cmd/gosec@latest
+                echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+                gosec -h  # Debug step: check if gosec is installed
+        # -   name: Run gosec
+        #     run: gosec ./...
+        -   name: Run gosec and save report
+            run: |
+                set -e
+                gosec -fmt=json -severity=medium -out=gosec-report.json ./... || echo "⚠️ Gosec exited with non-zero code but report may still be available"
+        -   name: Check if gosec report exists
+            run: |
+                if [ ! -f gosec-report.json ]; then
+                  echo "❌ Gosec report not found."
+                  exit 1
+                fi
+        -   name: Upload gosec Report
+            uses: actions/upload-artifact@v4
+            with:
+                name: gosec-report
+                path: gosec-report.json
+        -   name: Show Gosec Report in Logs
+            run: cat gosec-report.json
+        -   name: Check for High Severity Issues
+            id: check
+            run: |
+              count=$(jq '[.Issues[] | select(.severity == "HIGH" or .severity == "CRITICAL")] | length' gosec-report.json)
+              echo "gosec-high-found=$([[ $count -gt 0 ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+        -   name: Fail if High/Critical Vulnerabilities Found
+            if: steps.check.outputs.gosec-high-found == 'true'
+            run: |
+                echo "❌ High/Critical vulnerabilities found. Failing the job."
+                exit 1
 
-                    echo "gosec-high-found=$([[ $count -gt 0 ]] && echo true || echo false)"
-                    >> $GITHUB_OUTPUT
-            -   name: Fail if High/Critical Vulnerabilities Found
-                if: steps.check.outputs.gosec-high-found == 'true'
-                run: |
-                    echo "❌ High/Critical vulnerabilities found. Failing the job."
-                    exit 1
+    # gosec:
+    #     name: Static Code Analysis (gosec)
+    #     runs-on: ubuntu-latest
+    #     continue-on-error: true
+    #     outputs:
+    #         gosec-high-found: '${{ steps.check.outputs.gosec-high-found }}'
+    #     steps:
+    #         -   name: Checkout code
+    #             uses: actions/checkout@v3
+    #         -   name: Set up Go
+    #             uses: actions/setup-go@v4
+    #             with:
+    #                 go-version-file: go.mod
+    #         -   name: Tidy and Download Go Modules
+    #             run: |
+    #                 go mod tidy
+    #                 go mod download
+    #         -   name: Install Ent and Gosec
+    #             run: |
+    #                 go install entgo.io/ent/cmd/ent@v0.11.2
+    #                 go install github.com/securego/gosec/v2/cmd/gosec@v2.17.0
+    #                 echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+    #         -   name: Build project to warm up Go type system
+    #             run: go build ./...
+    #         -   name: Generate Ent code
+    #             run: ent generate ./storage/ent
+    #         -   name: Run gosec and save report
+    #             run: >
+    #                 gosec -fmt=json -severity=medium -out=gosec-report.json ./... || echo
+    #                 "⚠️ Gosec exited with non-zero code but report may still be available"
+    #         -   name: Check if gosec report exists
+    #             run: |
+    #                 if [ ! -f gosec-report.json ]; then
+    #                 echo "❌ Gosec report not found."
+    #                 exit 1
+    #                 fi
+    #         -   name: Upload gosec Report
+    #             uses: actions/upload-artifact@v4
+    #             with:
+    #                 name: gosec-report
+    #                 path: gosec-report.json
+    #         -   name: Show Gosec Report in Logs
+    #             run: cat gosec-report.json
+    #         -   name: Check for High Severity Issues
+    #             id: check
+    #             run: >
+    #                 count=$(jq '[.Issues[] | select(.severity == "HIGH" or .severity ==
+    #                 "CRITICAL")] | length' gosec-report.json)
+
+    #                 echo "gosec-high-found=$([[ $count -gt 0 ]] && echo true || echo false)"
+    #                 >> $GITHUB_OUTPUT
+    #         -   name: Fail if High/Critical Vulnerabilities Found
+    #             if: steps.check.outputs.gosec-high-found == 'true'
+    #             run: |
+    #                 echo "❌ High/Critical vulnerabilities found. Failing the job."
+    #                 exit 1
 
 
     auto-pr-gosec:
