@@ -29,12 +29,20 @@ jobs:
                 echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
                 gosec -h  # Debug step: check if gosec is installed
 
+        -   name: Generate Ent code
+            run: |
+                go generate ./...
+
+        -   name: Build project (pre-Gosec sanity)
+            run: |
+                go build ./...
+
         # -   name: Run gosec
         #     run: gosec ./...
         -   name: Run gosec and save report
             run: |
                 set -e
-                gosec -tags=integration -fmt=json -severity=medium -out=gosec-report.json ./... || echo "⚠️ Gosec exited with non-zero code but report may still be available"
+                gosec -fmt=json -severity=medium -out=gosec-report.json ./... || echo "⚠️ Gosec exited with non-zero code but report may still be available"
 
         -   name: Check if gosec report exists
             run: |
