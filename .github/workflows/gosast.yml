@@ -105,7 +105,7 @@ jobs:
             -   name: Build project to warm up Go type system
                 run: go build ./...
             -   name: Generate Ent code
-                run: go generate ./...
+                run: ent generate ./storage/ent
             -   name: Run gosec and save report
                 run: >
                     gosec -fmt=json -severity=medium -out=gosec-report.json ./... || echo
