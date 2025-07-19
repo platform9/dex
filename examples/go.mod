@@ -1,6 +1,6 @@
 module github.com/dexidp/dex/examples
 
-go 1.23.0
+go 1.23
 
 require (
 	github.com/coreos/go-oidc/v3 v3.1.0
