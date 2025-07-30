@@ -7,7 +7,20 @@ import (
 	"testing"
 
 	"github.com/dexidp/dex/connector"
+	"github.com/dexidp/dex/pkg/log"
 )
+
+// testLogger is a simple implementation of log.Logger for testing
+type testLogger struct{}
+
+func (l testLogger) Debug(args ...interface{})                 {}
+func (l testLogger) Info(args ...interface{})                  {}
+func (l testLogger) Warn(args ...interface{})                  {}
+func (l testLogger) Error(args ...interface{})                 {}
+func (l testLogger) Debugf(format string, args ...interface{}) {}
+func (l testLogger) Infof(format string, args ...interface{})  {}
+func (l testLogger) Warnf(format string, args ...interface{})  {}
+func (l testLogger) Errorf(format string, args ...interface{}) {}
 
 func TestFlowMinimal(t *testing.T) {
 	mux := http.NewServeMux()
@@ -81,13 +94,16 @@ func TestFlowMinimal(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
+	// Create a test logger that satisfies the log.Logger interface
+	logger := log.Logger(testLogger{})
+
 	conn, err := New(Config{
 		BaseURL:            ts.URL,
 		IdentityProviderID: "foo",
 		ProtocolID:         "saml2",
 		TokenInQuery:       true,
 		ProjectID:          "p123",
-	})
+	}, logger)
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}

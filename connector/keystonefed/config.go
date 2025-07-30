@@ -73,5 +73,5 @@ func (c *Config) Validate() error {
 
 // Open returns a connector using the configuration
 func (c *Config) Open(id string, logger log.Logger) (connector.Connector, error) {
-	return New(*c)
+	return New(*c, logger)
 }

@@ -24,6 +24,7 @@ const (
 	testDomain = "default"
 )
 
+var testDomainKeystone = domainKeystone{ID: testDomain}
 var (
 	keystoneURL      = ""
 	keystoneAdminURL = ""
@@ -51,7 +52,7 @@ func getAdminToken(t *testing.T, adminName, adminPass string) (token, id string)
 				Password: password{
 					User: user{
 						Name:     adminName,
-						Domain:   domain{ID: testDomain},
+						Domain:   testDomainKeystone,
 						Password: adminPass,
 					},
 				},
@@ -219,7 +220,7 @@ func addUserToGroup(t *testing.T, token, groupID, userID string) error {
 func TestIncorrectCredentialsLogin(t *testing.T) {
 	setupVariables(t)
 	c := conn{
-		Host: keystoneURL, Domain: testDomain,
+		Host: keystoneURL, Domain: testDomainKeystone,
 		AdminUsername: adminUser, AdminPassword: adminPass,
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
@@ -294,9 +295,9 @@ func TestValidUserLogin(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			userID := createUser(t, token, tt.input.username, tt.input.email, tt.input.password)
 			defer deleteResource(t, token, userID, usersURL)
-
+			testD := domainKeystone{ID: tt.input.domain}
 			c := conn{
-				Host: keystoneURL, Domain: tt.input.domain,
+				Host: keystoneURL, Domain: testD,
 				AdminUsername: adminUser, AdminPassword: adminPass,
 			}
 			s := connector.Scopes{OfflineAccess: true, Groups: true}
@@ -333,7 +334,7 @@ func TestUseRefreshToken(t *testing.T) {
 	defer deleteResource(t, token, groupID, groupsURL)
 
 	c := conn{
-		Host: keystoneURL, Domain: testDomain,
+		Host: keystoneURL, Domain: testDomainKeystone,
 		AdminUsername: adminUser, AdminPassword: adminPass,
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
@@ -358,7 +359,7 @@ func TestUseRefreshTokenUserDeleted(t *testing.T) {
 	userID := createUser(t, token, testUser, testEmail, testPass)
 
 	c := conn{
-		Host: keystoneURL, Domain: testDomain,
+		Host: keystoneURL, Domain: testDomainKeystone,
 		AdminUsername: adminUser, AdminPassword: adminPass,
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
@@ -388,7 +389,7 @@ func TestUseRefreshTokenGroupsChanged(t *testing.T) {
 	defer deleteResource(t, token, userID, usersURL)
 
 	c := conn{
-		Host: keystoneURL, Domain: testDomain,
+		Host: keystoneURL, Domain: testDomainKeystone,
 		AdminUsername: adminUser, AdminPassword: adminPass,
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
@@ -424,7 +425,7 @@ func TestNoGroupsInScope(t *testing.T) {
 	defer deleteResource(t, token, userID, usersURL)
 
 	c := conn{
-		Host: keystoneURL, Domain: testDomain,
+		Host: keystoneURL, Domain: testDomainKeystone,
 		AdminUsername: adminUser, AdminPassword: adminPass,
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: false}

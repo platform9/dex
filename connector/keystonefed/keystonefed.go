@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	//"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/dexidp/dex/connector"
+	"github.com/dexidp/dex/pkg/log"
 )
 
 // var _ connector.Login = (*Connector)(nil)
@@ -18,13 +21,14 @@ var _ connector.CallbackConnector = (*Connector)(nil)
 type Connector struct {
 	cfg    Config
 	client *http.Client
+	logger log.Logger
 
 	// Stores callback information for the federation flow
 	callbackURL string
 	state       string
 }
 
-func New(cfg Config) (*Connector, error) {
+func New(cfg Config, logger log.Logger) (*Connector, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -36,16 +40,19 @@ func New(cfg Config) (*Connector, error) {
 		client: &http.Client{
 			Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second,
 		},
+		logger: logger,
 	}, nil
 }
 
 // LoginURL returns the Keystone WebSSO URL or Federation SSO URL the browser should be sent to.
 func (c *Connector) LoginURL(scopes connector.Scopes, callbackURL, state string) (string, error) {
+	c.logger.Infof("LoginURL called with callbackURL=%s, state=%s", callbackURL, state)
 	ksBase := strings.TrimRight(c.cfg.BaseURL, "/")
 
 	// Store the callback URL and state in the connector for use during callback handling
 	c.callbackURL = callbackURL
 	c.state = state
+	c.logger.Infof("Stored callback URL=%s and state=%s in connector", callbackURL, state)
 
 	if c.cfg.EnableFederation {
 		// Use Shibboleth SSO login path for federation
@@ -66,6 +73,7 @@ func (c *Connector) LoginURL(scopes connector.Scopes, callbackURL, state string)
 			url.QueryEscape(state)))
 		q := u.Query()
 		q.Set("RelayState", relayState)
+		c.logger.Infof("Setting RelayState=%s for federation login", relayState)
 		u.RawQuery = q.Encode()
 		return u.String(), nil
 	} else {
@@ -85,27 +93,41 @@ func (c *Connector) LoginURL(scopes connector.Scopes, callbackURL, state string)
 
 // HandleCallback processes Keystone's redirect back to Dex.
 func (c *Connector) HandleCallback(scopes connector.Scopes, r *http.Request) (connector.Identity, error) {
+	c.logger.Infof("HandleCallback received request: URL=%s, Method=%s", r.URL.String(), r.Method)
+	c.logger.Infof("Request headers: %v", r.Header)
+	c.logger.Infof("Request cookies count: %d", len(r.Cookies()))
+	for i, cookie := range r.Cookies() {
+		c.logger.Infof("Cookie[%d]: Name=%s, Domain=%s", i, cookie.Name, cookie.Domain)
+	}
+
 	var ksToken string
 	var err error
 
 	// Get state from query parameters
 	state := r.URL.Query().Get("state")
+	c.logger.Infof("State from query: %s", state)
 	if state == "" {
+		c.logger.Error("Missing state in request")
 		return connector.Identity{}, fmt.Errorf("missing state")
 	}
 
 	// Handle federation flow if enabled
 	if c.cfg.EnableFederation {
-		// Check if this is a SAML response from the IDP
+		c.logger.Infof("Processing federation flow with EnableFederation=true")
+		// Check if this is a direct SAML response from an IdP
 		if r.Method == "POST" && r.FormValue("SAMLResponse") != "" {
 			// Extract the SAML response
 			samlResponse := r.FormValue("SAMLResponse")
+			c.logger.Infof("Received direct SAML response (truncated): %s...", samlResponse[:min(len(samlResponse), 50)])
+			c.logger.Infof("RelayState from SAML response: %s", r.FormValue("RelayState"))
 
 			// Use the SAML response to get a token from Keystone
 			ksToken, err = c.getKeystoneTokenFromSAML(samlResponse, r.FormValue("RelayState"))
 			if err != nil {
-				return connector.Identity{}, fmt.Errorf("getting keystone token from SAML: %w", err)
+				c.logger.Errorf("Error getting token from SAML: %v", err)
+				return connector.Identity{}, fmt.Errorf("getting token from SAML: %w", err)
 			}
+			c.logger.Infof("Successfully obtained token from SAML response")
 		} else {
 			// Check for a federation cookie indicating we've completed authentication
 			cookie, err := r.Cookie("_shibsession_") // This name might vary
@@ -116,17 +138,27 @@ func (c *Connector) HandleCallback(scopes connector.Scopes, r *http.Request) (co
 					return connector.Identity{}, fmt.Errorf("getting keystone token from federation: %w", err)
 				}
 			} else {
-				return connector.Identity{}, fmt.Errorf("missing required authentication data for federation")
+				c.logger.Info("No SAML response found, checking for federation cookies")
+				// Extract federation cookies and use them to get a token
+				ksToken, err = c.getKeystoneTokenFromFederation(r)
+				if err != nil {
+					c.logger.Errorf("Error getting token from federation cookies: %v", err)
+					return connector.Identity{}, fmt.Errorf("getting token from federation cookies: %w", err)
+				}
+				c.logger.Infof("Successfully obtained token from federation cookies")
 			}
 		}
 	} else {
 		// Standard token-in-query flow
 		if !c.cfg.TokenInQuery {
+			c.logger.Error("TokenInQuery=false path not implemented")
 			return connector.Identity{}, fmt.Errorf("tokenInQuery=false path not implemented")
 		}
 
 		ksToken = r.URL.Query().Get("ks_token")
+		c.logger.Infof("ks_token from query: %s", truncateToken(ksToken))
 		if ksToken == "" {
+			c.logger.Error("Missing ks_token in query parameters")
 			return connector.Identity{}, fmt.Errorf("missing ks_token in query (Keystone must append it)")
 		}
 	}
@@ -140,6 +172,7 @@ func (c *Connector) HandleCallback(scopes connector.Scopes, r *http.Request) (co
 		}
 	}
 
+	c.logger.Infof("Retrieving user info with token: %s", truncateToken(ksToken))
 	user, groups, err := c.fetchUserAndGroups(tokenToUse)
 	if err != nil {
 		return connector.Identity{}, err
@@ -298,25 +331,33 @@ func (c *Connector) getGroups(token, userID string) ([]string, error) {
 // getKeystoneTokenFromSAML submits a SAML response to the Shibboleth SAML2 POST endpoint
 // to establish a session and then gets a Keystone token via the federation auth endpoint.
 func (c *Connector) getKeystoneTokenFromSAML(samlResponse, relayState string) (string, error) {
+	c.logger.Infof("Getting Keystone token from SAML response with RelayState: %s", relayState)
 	ksBase := strings.TrimRight(c.cfg.BaseURL, "/")
 
 	// Replace any {IdP} placeholder with the actual IdentityProviderID
 	saml2PostPath := strings.Replace(c.cfg.ShibbolethSAML2PostPath, "{IdP}", c.cfg.IdentityProviderID, -1)
+	c.logger.Infof("Using Shibboleth SAML2 POST path: %s", saml2PostPath)
 
 	// Prepare the SAML POST request to establish a federation session
 	form := url.Values{}
 	form.Add("SAMLResponse", samlResponse)
 	if relayState != "" {
+		c.logger.Infof("Adding RelayState to SAML POST: %s", relayState)
 		form.Add("RelayState", relayState)
+	} else {
+		c.logger.Warn("No RelayState provided for SAML POST request")
 	}
 
 	// Submit SAML response to Shibboleth SAML2 POST endpoint
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s%s", ksBase, saml2PostPath),
-		strings.NewReader(form.Encode()))
+	samlPostURL := fmt.Sprintf("%s%s", ksBase, saml2PostPath)
+	c.logger.Infof("Submitting SAML response to: %s", samlPostURL)
+	req, err := http.NewRequest("POST", samlPostURL, strings.NewReader(form.Encode()))
 	if err != nil {
+		c.logger.Errorf("Error creating SAML POST request: %v", err)
 		return "", fmt.Errorf("creating SAML POST request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	c.logger.Infof("SAML POST request headers: %v", req.Header)
 
 	// Use a client that doesn't automatically follow redirects
 	clientNoRedirect := &http.Client{
@@ -333,17 +374,25 @@ func (c *Connector) getKeystoneTokenFromSAML(samlResponse, relayState string) (s
 	defer resp.Body.Close()
 
 	// Extract federation cookie(s) from response
+	c.logger.Infof("Response status from SAML POST: %s", resp.Status)
+	c.logger.Infof("Response headers: %v", resp.Header)
+
 	var federationCookies []*http.Cookie
 	for _, cookie := range resp.Cookies() {
+		c.logger.Infof("Cookie in response: Name=%s, Domain=%s, Path=%s", cookie.Name, cookie.Domain, cookie.Path)
 		if strings.Contains(cookie.Name, "_shibsession_") ||
 			strings.Contains(cookie.Name, "_saml_") ||
 			strings.Contains(cookie.Name, "_openstack_") {
+			c.logger.Infof("Found federation cookie: %s", cookie.Name)
 			federationCookies = append(federationCookies, cookie)
 		}
 	}
 
 	if len(federationCookies) == 0 {
+		c.logger.Error("No federation cookies found in response")
 		return "", fmt.Errorf("no federation cookies found in response")
+	} else {
+		c.logger.Infof("Found %d federation cookies", len(federationCookies))
 	}
 
 	// Now use the federation cookies to get a token from Keystone
@@ -353,17 +402,23 @@ func (c *Connector) getKeystoneTokenFromSAML(samlResponse, relayState string) (s
 // getKeystoneTokenFromFederation gets a Keystone token using an existing federation session.
 func (c *Connector) getKeystoneTokenFromFederation(r *http.Request) (string, error) {
 	// Extract federation cookies from the request
+	c.logger.Infof("Extracting federation cookies from request with %d cookies", len(r.Cookies()))
 	var federationCookies []*http.Cookie
 	for _, cookie := range r.Cookies() {
+		c.logger.Infof("Examining cookie: Name=%s, Domain=%s, Path=%s", cookie.Name, cookie.Domain, cookie.Path)
 		if strings.Contains(cookie.Name, "_shibsession_") ||
 			strings.Contains(cookie.Name, "_saml_") ||
 			strings.Contains(cookie.Name, "_openstack_") {
+			c.logger.Infof("Found federation cookie: %s", cookie.Name)
 			federationCookies = append(federationCookies, cookie)
 		}
 	}
 
 	if len(federationCookies) == 0 {
+		c.logger.Error("No federation cookies found in request")
 		return "", fmt.Errorf("no federation cookies found in request")
+	} else {
+		c.logger.Infof("Found %d federation cookies in request", len(federationCookies))
 	}
 
 	// Use the federation cookies to get a token from Keystone
@@ -373,39 +428,69 @@ func (c *Connector) getKeystoneTokenFromFederation(r *http.Request) (string, err
 // getKeystoneTokenWithFederationCookies makes a request to the OS-FEDERATION identity providers auth endpoint
 // with the federation cookies to get a Keystone token.
 func (c *Connector) getKeystoneTokenWithFederationCookies(cookies []*http.Cookie) (string, error) {
+	c.logger.Infof("Getting Keystone token with %d federation cookies", len(cookies))
 	ksBase := strings.TrimRight(c.cfg.BaseURL, "/")
 
 	// Replace any {IdP} placeholder with the actual IdentityProviderID
 	federationAuthPath := strings.Replace(c.cfg.FederationAuthPath, "{IdP}", c.cfg.IdentityProviderID, -1)
+	c.logger.Infof("Using federation auth path: %s", federationAuthPath)
 
 	// Create request to the federation auth endpoint
-	req, err := http.NewRequest("GET", fmt.Sprintf("%s%s", ksBase, federationAuthPath), nil)
+	federationAuthURL := fmt.Sprintf("%s%s", ksBase, federationAuthPath)
+	c.logger.Infof("Requesting token from federation auth endpoint: %s", federationAuthURL)
+	req, err := http.NewRequest("GET", federationAuthURL, nil)
 	if err != nil {
+		c.logger.Errorf("Error creating federation auth request: %v", err)
 		return "", fmt.Errorf("creating federation auth request: %w", err)
 	}
 
 	// Add all federation cookies to the request
 	for _, cookie := range cookies {
+		c.logger.Infof("Adding federation cookie to request: %s", cookie.Name)
 		req.AddCookie(cookie)
 	}
 
 	// Make the request to get a token
+	c.logger.Info("Sending federation auth request...")
 	resp, err := c.client.Do(req)
 	if err != nil {
+		c.logger.Errorf("Error making federation auth request: %v", err)
 		return "", fmt.Errorf("federation auth request: %w", err)
 	}
 	defer resp.Body.Close()
+	c.logger.Infof("Federation auth response status: %s", resp.Status)
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
+		c.logger.Errorf("Federation auth failed: %s body=%s", resp.Status, string(body))
 		return "", fmt.Errorf("federation auth failed: %s body=%s", resp.Status, string(body))
+	} else {
+		c.logger.Info("Federation auth request succeeded")
 	}
 
 	// Extract the token from the X-Subject-Token header
 	token := resp.Header.Get("X-Subject-Token")
+	c.logger.Infof("X-Subject-Token header: %s", truncateToken(token))
 	if token == "" {
-		return "", fmt.Errorf("no X-Subject-Token in federation auth response")
+		c.logger.Error("No X-Subject-Token header found in response")
+		return "", fmt.Errorf("no X-Subject-Token in response")
+	} else {
+		c.logger.Info("Successfully obtained token from federation auth endpoint")
 	}
 
 	return token, nil
+}
+
+func truncateToken(token string) string {
+	if len(token) > 50 {
+		return token[:47] + "..."
+	}
+	return token
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
