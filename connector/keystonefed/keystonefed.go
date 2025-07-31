@@ -72,8 +72,8 @@ func (c *Connector) LoginURL(scopes connector.Scopes, callbackURL, state string)
 	//	url.QueryEscape(state)))
 	relayState := fmt.Sprintf("%s&state=%s", callbackURL, state)
 	q := u.Query()
-	q.Set("RelayState", relayState)
-	c.logger.Infof("Setting RelayState=%s for federation login", relayState)
+	q.Set("return", relayState)
+	c.logger.Infof("Setting return=%s for federation login", relayState)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
