@@ -54,41 +54,28 @@ func (c *Connector) LoginURL(scopes connector.Scopes, callbackURL, state string)
 	c.state = state
 	c.logger.Infof("Stored callback URL=%s and state=%s in connector", callbackURL, state)
 
-	if c.cfg.EnableFederation {
-		// Use Shibboleth SSO login path for federation
-		ssoLoginPath := c.cfg.ShibbolethLoginPath
-		// Replace any {IdP} placeholder with the actual IdentityProviderID
-		ssoLoginPath = strings.Replace(ssoLoginPath, "{IdP}", c.cfg.IdentityProviderID, -1)
+	// Use Shibboleth SSO login path for federation
+	ssoLoginPath := c.cfg.ShibbolethLoginPath
+	// Replace any {IdP} placeholder with the actual IdentityProviderID
+	ssoLoginPath = strings.Replace(ssoLoginPath, "{IdP}", c.cfg.IdentityProviderID, -1)
 
-		// Construct the Shibboleth login URL
-		u, err := url.Parse(fmt.Sprintf("%s%s", ksBase, ssoLoginPath))
-		if err != nil {
-			return "", fmt.Errorf("parsing SSO login URL: %w", err)
-		}
-
-		// Add the relay state containing our callback URL and state
-		// The relay state will be passed through the entire federation flow
-		relayState := url.QueryEscape(fmt.Sprintf("callback=%s&state=%s",
-			url.QueryEscape(callbackURL),
-			url.QueryEscape(state)))
-		q := u.Query()
-		q.Set("RelayState", relayState)
-		c.logger.Infof("Setting RelayState=%s for federation login", relayState)
-		u.RawQuery = q.Encode()
-		return u.String(), nil
-	} else {
-		// Standard Keystone WebSSO endpoint:
-		//   /v3/auth/OS-FEDERATION/websso/{protocol}?origin=<dex-callback>
-		u, err := url.Parse(fmt.Sprintf("%s/v3/auth/OS-FEDERATION/websso/%s", ksBase, c.cfg.ProtocolID))
-		if err != nil {
-			return "", err
-		}
-		q := u.Query()
-		// Include Dex's state in origin so we can recover it.
-		q.Set("origin", callbackURL+"?state="+url.QueryEscape(state))
-		u.RawQuery = q.Encode()
-		return u.String(), nil
+	// Construct the Shibboleth login URL
+	u, err := url.Parse(fmt.Sprintf("%s%s", ksBase, ssoLoginPath))
+	if err != nil {
+		return "", fmt.Errorf("parsing SSO login URL: %w", err)
 	}
+
+	// Add the relay state containing our callback URL and state
+	// The relay state will be passed through the entire federation flow
+	//relayState := url.QueryEscape(fmt.Sprintf("callback=%s&state=%s",
+	//	url.QueryEscape(callbackURL),
+	//	url.QueryEscape(state)))
+	relayState := fmt.Sprintf("callback=%s&state=%s", callbackURL, state)
+	q := u.Query()
+	q.Set("RelayState", relayState)
+	c.logger.Infof("Setting RelayState=%s for federation login", relayState)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 // HandleCallback processes Keystone's redirect back to Dex.
@@ -112,54 +99,39 @@ func (c *Connector) HandleCallback(scopes connector.Scopes, r *http.Request) (co
 	}
 
 	// Handle federation flow if enabled
-	if c.cfg.EnableFederation {
-		c.logger.Infof("Processing federation flow with EnableFederation=true")
-		// Check if this is a direct SAML response from an IdP
-		if r.Method == "POST" && r.FormValue("SAMLResponse") != "" {
-			// Extract the SAML response
-			samlResponse := r.FormValue("SAMLResponse")
-			c.logger.Infof("Received direct SAML response (truncated): %s...", samlResponse[:min(len(samlResponse), 50)])
-			c.logger.Infof("RelayState from SAML response: %s", r.FormValue("RelayState"))
+	c.logger.Infof("Processing federation flow with EnableFederation=true")
+	// Check if this is a direct SAML response from an IdP
+	if r.Method == "POST" && r.FormValue("SAMLResponse") != "" {
+		// Extract the SAML response
+		samlResponse := r.FormValue("SAMLResponse")
+		c.logger.Infof("Received direct SAML response (truncated): %s...", samlResponse[:min(len(samlResponse), 50)])
+		c.logger.Infof("RelayState from SAML response: %s", r.FormValue("RelayState"))
 
-			// Use the SAML response to get a token from Keystone
-			ksToken, err = c.getKeystoneTokenFromSAML(samlResponse, r.FormValue("RelayState"))
-			if err != nil {
-				c.logger.Errorf("Error getting token from SAML: %v", err)
-				return connector.Identity{}, fmt.Errorf("getting token from SAML: %w", err)
-			}
-			c.logger.Infof("Successfully obtained token from SAML response")
-		} else {
-			// Check for a federation cookie indicating we've completed authentication
-			cookie, err := r.Cookie("_shibsession_") // This name might vary
-			if err == nil && cookie != nil {
-				// Get a token using the federation auth endpoint
-				ksToken, err = c.getKeystoneTokenFromFederation(r)
-				if err != nil {
-					return connector.Identity{}, fmt.Errorf("getting keystone token from federation: %w", err)
-				}
-			} else {
-				c.logger.Info("No SAML response found, checking for federation cookies")
-				// Extract federation cookies and use them to get a token
-				ksToken, err = c.getKeystoneTokenFromFederation(r)
-				if err != nil {
-					c.logger.Errorf("Error getting token from federation cookies: %v", err)
-					return connector.Identity{}, fmt.Errorf("getting token from federation cookies: %w", err)
-				}
-				c.logger.Infof("Successfully obtained token from federation cookies")
-			}
+		// Use the SAML response to get a token from Keystone
+		ksToken, err = c.getKeystoneTokenFromSAML(samlResponse, r.FormValue("RelayState"))
+		if err != nil {
+			c.logger.Errorf("Error getting token from SAML: %v", err)
+			return connector.Identity{}, fmt.Errorf("getting token from SAML: %w", err)
 		}
+		c.logger.Infof("Successfully obtained token from SAML response")
 	} else {
-		// Standard token-in-query flow
-		if !c.cfg.TokenInQuery {
-			c.logger.Error("TokenInQuery=false path not implemented")
-			return connector.Identity{}, fmt.Errorf("tokenInQuery=false path not implemented")
-		}
-
-		ksToken = r.URL.Query().Get("ks_token")
-		c.logger.Infof("ks_token from query: %s", truncateToken(ksToken))
-		if ksToken == "" {
-			c.logger.Error("Missing ks_token in query parameters")
-			return connector.Identity{}, fmt.Errorf("missing ks_token in query (Keystone must append it)")
+		// Check for a federation cookie indicating we've completed authentication
+		cookie, err := r.Cookie("_shibsession_") // This name might vary
+		if err == nil && cookie != nil {
+			// Get a token using the federation auth endpoint
+			ksToken, err = c.getKeystoneTokenFromFederation(r)
+			if err != nil {
+				return connector.Identity{}, fmt.Errorf("getting keystone token from federation: %w", err)
+			}
+		} else {
+			c.logger.Info("No SAML response found, checking for federation cookies")
+			// Extract federation cookies and use them to get a token
+			ksToken, err = c.getKeystoneTokenFromFederation(r)
+			if err != nil {
+				c.logger.Errorf("Error getting token from federation cookies: %v", err)
+				return connector.Identity{}, fmt.Errorf("getting token from federation cookies: %w", err)
+			}
+			c.logger.Infof("Successfully obtained token from federation cookies")
 		}
 	}
 
