@@ -145,7 +145,7 @@ func newHTTPClient(rootCAs []string, insecureSkipVerify bool) (*http.Client, err
 
 	if insecureSkipVerify {
 		// ⚠️ Warning: Avoid in production. Consider logging a warning here.
-		tlsConfig.InsecureSkipVerify = true
+		tlsConfig.InsecureSkipVerify = true // #nosec G402 - explicitly allowed in dev/test only
 	}
 
 	return &http.Client{

@@ -43,7 +43,7 @@ const (
 	statusCodeSuccess = "urn:oasis:names:tc:SAML:2.0:status:Success"
 
 	// subject confirmation methods
-	subjectConfirmationMethodBearer = "urn:oasis:names:tc:SAML:2.0:cm:bearer"
+	subjectConfirmationMethodBearer = "urn:oasis:names:tc:SAML:2.0:cm:bearer" // #nosec G101 -- Not a credential
 
 	// allowed clock drift for timestamp validation
 	allowedClockDrift = time.Duration(30) * time.Second
