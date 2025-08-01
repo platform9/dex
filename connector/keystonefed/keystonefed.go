@@ -65,7 +65,7 @@ func (c *Connector) LoginURL(scopes connector.Scopes, callbackURL, state string)
 
 	// The target will be passed through the entire federation flow.
 	// target is nothing but the relay state that will be used by shibboleth to redirect back to Dex.
-	target := fmt.Sprintf("%s&state=%s", callbackURL, state)
+	target := fmt.Sprintf("%s?state=%s", callbackURL, state)
 	q := u.Query()
 	q.Set("target", target)
 	c.logger.Infof("Setting target=%s for federation login", target)
