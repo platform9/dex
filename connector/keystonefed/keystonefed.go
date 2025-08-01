@@ -1,11 +1,12 @@
 package keystonefed
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 
-	//"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -32,13 +33,10 @@ func New(cfg Config, logger log.Logger) (*Connector, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if cfg.TimeoutSeconds == 0 {
-		cfg.TimeoutSeconds = 10
-	}
 	return &Connector{
 		cfg: cfg,
 		client: &http.Client{
-			Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second,
+			Timeout: time.Duration(30) * time.Second,
 		},
 		logger: logger,
 	}, nil
@@ -65,15 +63,12 @@ func (c *Connector) LoginURL(scopes connector.Scopes, callbackURL, state string)
 		return "", fmt.Errorf("parsing SSO login URL: %w", err)
 	}
 
-	// Add the relay state containing our callback URL and state
-	// The relay state will be passed through the entire federation flow
-	//relayState := url.QueryEscape(fmt.Sprintf("callback=%s&state=%s",
-	//	url.QueryEscape(callbackURL),
-	//	url.QueryEscape(state)))
-	relayState := fmt.Sprintf("%s&state=%s", callbackURL, state)
+	// The target will be passed through the entire federation flow.
+	// target is nothing but the relay state that will be used by shibboleth to redirect back to Dex.
+	target := url.QueryEscape(fmt.Sprintf("%s&state=%s", callbackURL, state))
 	q := u.Query()
-	q.Set("return", relayState)
-	c.logger.Infof("Setting return=%s for federation login", relayState)
+	q.Set("target", target)
+	c.logger.Infof("Setting target=%s for federation login", target)
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
@@ -89,6 +84,8 @@ func (c *Connector) HandleCallback(scopes connector.Scopes, r *http.Request) (co
 
 	var ksToken string
 	var err error
+	var tokenInfo *tokenInfo
+	identity := connector.Identity{}
 
 	// Get state from query parameters
 	state := r.URL.Query().Get("state")
@@ -97,278 +94,503 @@ func (c *Connector) HandleCallback(scopes connector.Scopes, r *http.Request) (co
 		c.logger.Error("Missing state in request")
 		return connector.Identity{}, fmt.Errorf("missing state")
 	}
-
-	// Handle federation flow if enabled
-	c.logger.Infof("Processing federation flow with EnableFederation=true")
-	// Check if this is a direct SAML response from an IdP
-	if r.Method == "POST" && r.FormValue("SAMLResponse") != "" {
-		// Extract the SAML response
-		samlResponse := r.FormValue("SAMLResponse")
-		c.logger.Infof("Received direct SAML response (truncated): %s...", samlResponse[:min(len(samlResponse), 50)])
-		c.logger.Infof("RelayState from SAML response: %s", r.FormValue("RelayState"))
-
-		// Use the SAML response to get a token from Keystone
-		ksToken, err = c.getKeystoneTokenFromSAML(samlResponse, r.FormValue("RelayState"))
-		if err != nil {
-			c.logger.Errorf("Error getting token from SAML: %v", err)
-			return connector.Identity{}, fmt.Errorf("getting token from SAML: %w", err)
-		}
-		c.logger.Infof("Successfully obtained token from SAML response")
-	} else {
-		// Check for a federation cookie indicating we've completed authentication
-		cookie, err := r.Cookie("_shibsession_") // This name might vary
-		if err == nil && cookie != nil {
-			// Get a token using the federation auth endpoint
-			ksToken, err = c.getKeystoneTokenFromFederation(r)
-			if err != nil {
-				return connector.Identity{}, fmt.Errorf("getting keystone token from federation: %w", err)
-			}
-		} else {
-			c.logger.Info("No SAML response found, checking for federation cookies")
-			// Extract federation cookies and use them to get a token
-			ksToken, err = c.getKeystoneTokenFromFederation(r)
-			if err != nil {
-				c.logger.Errorf("Error getting token from federation cookies: %v", err)
-				return connector.Identity{}, fmt.Errorf("getting token from federation cookies: %w", err)
-			}
-			c.logger.Infof("Successfully obtained token from federation cookies")
-		}
+	// Extract federation cookies and use them to get a keystone token
+	ksToken, err = c.getKeystoneTokenFromFederation(r)
+	if err != nil {
+		c.logger.Errorf("Error getting token from federation cookies: %v", err)
+		return connector.Identity{}, fmt.Errorf("getting token from federation cookies: %w", err)
 	}
-
-	// Optionally rescope
-	tokenToUse := ksToken
-	if c.cfg.ProjectID != "" || c.cfg.DomainID != "" {
-		tokenToUse, err = c.scopeToken(ksToken)
-		if err != nil {
-			return connector.Identity{}, fmt.Errorf("scoping token: %w", err)
-		}
-	}
+	c.logger.Infof("Successfully obtained token from federation cookies")
 
 	c.logger.Infof("Retrieving user info with token: %s", truncateToken(ksToken))
-	user, groups, err := c.fetchUserAndGroups(tokenToUse)
+	tokenInfo, err = c.getTokenInfo(r.Context(), ksToken)
 	if err != nil {
 		return connector.Identity{}, err
 	}
+	if scopes.Groups {
+		c.logger.Infof("groups scope requested, fetching groups")
+		var err error
+		adminToken, err := c.getAdminTokenUnscoped(r.Context())
+		if err != nil {
+			return identity, fmt.Errorf("keystone: failed to obtain admin token: %v", err)
+		}
+		identity.Groups, err = c.getGroups(r.Context(), adminToken, tokenInfo)
+		if err != nil {
+			return connector.Identity{}, err
+		}
+	}
+	identity.Username = tokenInfo.User.Name
+	identity.UserID = tokenInfo.User.ID
 
-	return connector.Identity{
-		UserID:        user.UserID,
-		Username:      user.Username,
-		Email:         user.Email,
-		Groups:        groups,
-		ConnectorData: []byte(tokenToUse), // store token if you want to refresh attributes later
-	}, nil
+	user, err := c.getUser(r.Context(), tokenInfo.User.ID, ksToken)
+	if err != nil {
+		return identity, err
+	}
+	if user.User.Email != "" {
+		identity.Email = user.User.Email
+		identity.EmailVerified = true
+	}
+
+	data := connectorData{Token: ksToken}
+	connData, err := json.Marshal(data)
+	if err != nil {
+		return identity, fmt.Errorf("marshal connector data: %v", err)
+	}
+	identity.ConnectorData = connData
+
+	return identity, nil
 }
 
-// scopeToken exchanges an unscoped token for a project/domain-scoped token.
-func (c *Connector) scopeToken(unscoped string) (string, error) {
-	type scopeReq struct {
-		Auth struct {
-			Identity struct {
-				Methods []string `json:"methods"`
-				Token   struct {
-					ID string `json:"id"`
-				} `json:"token"`
-			} `json:"identity"`
-			Scope json.RawMessage `json:"scope"`
-		} `json:"auth"`
+func (c *Connector) getAdminTokenUnscoped(ctx context.Context) (string, error) {
+	client := &http.Client{}
+	domain := domainKeystone{
+		Name: "default",
 	}
-	var sr scopeReq
-	sr.Auth.Identity.Methods = []string{"token"}
-	sr.Auth.Identity.Token.ID = unscoped
-
-	if c.cfg.ProjectID != "" {
-		sr.Auth.Scope = json.RawMessage([]byte(fmt.Sprintf(`{"project": {"id": "%s"}}`, c.cfg.ProjectID)))
-	} else {
-		sr.Auth.Scope = json.RawMessage([]byte(fmt.Sprintf(`{"domain": {"id": "%s"}}`, c.cfg.DomainID)))
+	jsonData := loginRequestData{
+		auth: auth{
+			Identity: identity{
+				Methods: []string{"password"},
+				Password: password{
+					User: user{
+						Name:     c.cfg.AdminUsername,
+						Domain:   domain,
+						Password: c.cfg.AdminPassword,
+					},
+				},
+			},
+		},
 	}
-
-	payload, _ := json.Marshal(sr)
-	req, _ := http.NewRequest("POST", strings.TrimRight(c.cfg.BaseURL, "/")+"/v3/auth/tokens", strings.NewReader(string(payload)))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
+	jsonValue, err := json.Marshal(jsonData)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("scope token failed: %s body=%s", resp.Status, string(body))
+	// https://developer.openstack.org/api-ref/identity/v3/#password-authentication-with-unscoped-authorization
+	authTokenURL := c.cfg.BaseURL + "/keystone/v3/auth/tokens/"
+	req, err := http.NewRequest("POST", authTokenURL, bytes.NewBuffer(jsonValue))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctx)
+	resp, err := client.Do(req)
+
+	if err != nil {
+		return "", fmt.Errorf("keystone: error %v", err)
+	}
+	if resp.StatusCode/100 != 2 {
+		return "", fmt.Errorf("keystone login: error %v", resp.StatusCode)
+	}
+	if resp.StatusCode != 201 {
+		return "", nil
 	}
 	return resp.Header.Get("X-Subject-Token"), nil
 }
 
-func (c *Connector) fetchUserAndGroups(token string) (keystoneIdentity, []string, error) {
-	id, email, name, domainID, projectID, err := c.inspectToken(token)
+func (c *Connector) getAllGroups(ctx context.Context, token string) ([]keystoneGroup, error) {
+	// https://docs.openstack.org/api-ref/identity/v3/?expanded=list-groups-detail#list-groups
+	groupsURL := c.cfg.BaseURL + "/keystone/v3/groups"
+	req, err := http.NewRequest(http.MethodGet, groupsURL, nil)
 	if err != nil {
-		return keystoneIdentity{}, nil, err
+		return nil, err
+	}
+	req.Header.Set("X-Auth-Token", token)
+	req = req.WithContext(ctx)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		c.logger.Errorf("keystone: error while fetching groups\n")
+		return nil, err
 	}
 
-	if email == "" {
-		// Fallback to /v3/users/{id}
-		if e, err2 := c.getUserEmail(token, id); err2 == nil {
-			email = e
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	groupsResp := new(groupsResponse)
+
+	err = json.Unmarshal(data, &groupsResp)
+	if err != nil {
+		return nil, err
+	}
+	return groupsResp.Groups, nil
+}
+
+func (c *Connector) getUserGroups(ctx context.Context, userID string, token string) ([]keystoneGroup, error) {
+	client := &http.Client{}
+	// https://developer.openstack.org/api-ref/identity/v3/#list-groups-to-which-a-user-belongs
+	groupsURL := c.cfg.BaseURL + "/keystone/v3/users/" + userID + "/groups"
+	req, err := http.NewRequest("GET", groupsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Auth-Token", token)
+	req = req.WithContext(ctx)
+	resp, err := client.Do(req)
+	if err != nil {
+		c.logger.Errorf("keystone: error while fetching user %q groups\n", userID)
+		return nil, err
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	groupsResp := new(groupsResponse)
+
+	err = json.Unmarshal(data, &groupsResp)
+	if err != nil {
+		return nil, err
+	}
+	return groupsResp.Groups, nil
+}
+
+func (c *Connector) getRoleAssignments(ctx context.Context, token string, opts getRoleAssignmentsOptions) ([]roleAssignment, error) {
+	endpoint := fmt.Sprintf("%s/v3/role_assignments?", c.cfg.BaseURL)
+	// note: group and user filters are mutually exclusive
+	if len(opts.userID) > 0 {
+		endpoint = fmt.Sprintf("%seffective&user.id=%s", endpoint, opts.userID)
+	} else if len(opts.groupID) > 0 {
+		endpoint = fmt.Sprintf("%sgroup.id=%s", endpoint, opts.groupID)
+	}
+
+	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail#list-role-assignments
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Auth-Token", token)
+	req = req.WithContext(ctx)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		c.logger.Errorf("keystone: error while fetching role assignments: %v", err)
+		return nil, err
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	roleAssignmentResp := struct {
+		RoleAssignments []roleAssignment `json:"role_assignments"`
+	}{}
+
+	err = json.Unmarshal(data, &roleAssignmentResp)
+	if err != nil {
+		return nil, err
+	}
+
+	return roleAssignmentResp.RoleAssignments, nil
+}
+
+func (c *Connector) getGroups(ctx context.Context, token string, tokenInfo *tokenInfo) ([]string, error) {
+	var userGroups []string
+	var userGroupIDs []string
+
+	allGroups, err := c.getAllGroups(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+
+	// For SSO users, groups are passed down through the federation API.
+	if tokenInfo.User.OSFederation != nil {
+		for _, osGroup := range tokenInfo.User.OSFederation.Groups {
+			// If grouop name is empty, try to find the group by ID
+			if len(osGroup.Name) == 0 {
+				var ok bool
+				osGroup, ok = findGroupByID(allGroups, osGroup.ID)
+				if !ok {
+					c.logger.Warnf("Group with ID '%s' attached to user '%s' could not be found. Skipping.",
+						osGroup.ID, tokenInfo.User.ID)
+					continue
+				}
+			}
+			userGroups = append(userGroups, osGroup.Name)
+			userGroupIDs = append(userGroupIDs, osGroup.ID)
 		}
 	}
 
-	groups, err := c.getGroups(token, id)
+	// For local users, fetch the groups stored in Keystone.
+	localGroups, err := c.getUserGroups(ctx, tokenInfo.User.ID, token)
 	if err != nil {
-		return keystoneIdentity{}, nil, err
+		return nil, err
 	}
 
-	return keystoneIdentity{
-		UserID:    id,
-		Username:  name,
-		Email:     email,
-		Groups:    groups,
-		ProjectID: projectID,
-		DomainID:  domainID,
-	}, groups, nil
+	for _, localGroup := range localGroups {
+		// If group name is empty, try to find the group by ID
+		if len(localGroup.Name) == 0 {
+			var ok bool
+			localGroup, ok = findGroupByID(allGroups, localGroup.ID)
+			if !ok {
+				c.logger.Warnf("Group with ID '%s' attached to user '%s' could not be found. Skipping.",
+					localGroup.ID, tokenInfo.User.ID)
+				continue
+			}
+		}
+		userGroups = append(userGroups, localGroup.Name)
+		userGroupIDs = append(userGroupIDs, localGroup.ID)
+	}
+
+	// Get user-related role assignments
+	roleAssignments := []roleAssignment{}
+	localUserRoleAssignments, err := c.getRoleAssignments(ctx, token, getRoleAssignmentsOptions{
+		userID: tokenInfo.User.ID,
+	})
+	if err != nil {
+		c.logger.Errorf("failed to fetch role assignments for userID %s: %s", tokenInfo.User.ID, err)
+		return userGroups, err
+	}
+	roleAssignments = append(roleAssignments, localUserRoleAssignments...)
+
+	// Get group-related role assignments
+	for _, groupID := range userGroupIDs {
+		groupRoleAssignments, err := c.getRoleAssignments(ctx, token, getRoleAssignmentsOptions{
+			groupID: groupID,
+		})
+		if err != nil {
+			c.logger.Errorf("failed to fetch role assignments for groupID %s: %s", groupID, err)
+			return userGroups, err
+		}
+		roleAssignments = append(roleAssignments, groupRoleAssignments...)
+	}
+
+	if len(roleAssignments) == 0 {
+		c.logger.Warnf("Warning: no role assignments found.")
+		return userGroups, nil
+	}
+
+	roles, err := c.getRoles(ctx, token)
+	if err != nil {
+		return userGroups, err
+	}
+	roleMap := map[string]role{}
+	for _, role := range roles {
+		roleMap[role.ID] = role
+	}
+
+	projects, err := c.getProjects(ctx, token)
+	if err != nil {
+		return userGroups, err
+	}
+	projectMap := map[string]project{}
+	for _, project := range projects {
+		projectMap[project.ID] = project
+	}
+
+	//  Now create groups based on the role assignments
+	var roleGroups []string
+
+	// get the customer name to be prefixed in the group name
+	customerName := c.cfg.CustomerName
+	// if customerName is not provided in the keystone config get it from keystone host url.
+	if customerName == "" {
+		customerName, err = c.getHostname()
+		if err != nil {
+			return userGroups, err
+		}
+	}
+	for _, roleAssignment := range roleAssignments {
+		role, ok := roleMap[roleAssignment.Role.ID]
+		if !ok {
+			// Ignore role assignments to non-existent roles (shouldn't happen)
+			continue
+		}
+		project, ok := projectMap[roleAssignment.Scope.Project.ID]
+		if !ok {
+			// Ignore role assignments to non-existent projects (shouldn't happen)
+			continue
+		}
+		groupName := c.generateGroupName(project, role, customerName)
+		roleGroups = append(roleGroups, groupName)
+	}
+
+	// combine user-groups and role-groups
+	userGroups = append(userGroups, roleGroups...)
+	return pruneDuplicates(userGroups), nil
 }
 
-// inspectToken calls GET /v3/auth/tokens to retrieve token info.
-func (c *Connector) inspectToken(token string) (userID, email, name, domainID, projectID string, err error) {
-	req, _ := http.NewRequest("GET", strings.TrimRight(c.cfg.BaseURL, "/")+"/v3/auth/tokens", nil)
+func pruneDuplicates(ss []string) []string {
+	set := map[string]struct{}{}
+	var ns []string
+	for _, s := range ss {
+		if _, ok := set[s]; ok {
+			continue
+		}
+		set[s] = struct{}{}
+		ns = append(ns, s)
+	}
+	return ns
+}
+
+func (c *Connector) getRoles(ctx context.Context, token string) ([]role, error) {
+	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail,list-roles-detail#list-roles
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/v3/roles", c.cfg.BaseURL), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Auth-Token", token)
+	req = req.WithContext(ctx)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		c.logger.Errorf("keystone: error while fetching keystone roles\n")
+		return nil, err
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	rolesResp := struct {
+		Roles []role `json:"roles"`
+	}{}
+
+	err = json.Unmarshal(data, &rolesResp)
+	if err != nil {
+		return nil, err
+	}
+
+	return rolesResp.Roles, nil
+}
+
+func (c *Connector) getProjects(ctx context.Context, token string) ([]project, error) {
+	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail,list-roles-detail#list-roles
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/v3/projects", c.cfg.BaseURL), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Auth-Token", token)
+	req = req.WithContext(ctx)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		c.logger.Errorf("keystone: error while fetching keystone projects\n")
+		return nil, err
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	projectsResp := struct {
+		Projects []project `json:"projects"`
+	}{}
+
+	err = json.Unmarshal(data, &projectsResp)
+	if err != nil {
+		return nil, err
+	}
+
+	return projectsResp.Projects, nil
+}
+
+func (c *Connector) getHostname() (string, error) {
+	keystoneUrl := c.cfg.BaseURL
+	parsedURL, err := url.Parse(keystoneUrl)
+	if err != nil {
+		return "", fmt.Errorf("error parsing URL: %v", err)
+	}
+	customerFqdn := parsedURL.Hostname()
+	// get customer name and not the full fqdn
+	parts := strings.Split(customerFqdn, ".")
+	hostName := parts[0]
+
+	return hostName, nil
+}
+
+func (c *Connector) generateGroupName(project project, role role, customerName string) string {
+	roleName := role.Name
+	if roleName == "_member_" {
+		roleName = "member"
+	}
+	domainName := strings.ToLower(strings.ReplaceAll(c.cfg.DomainID, "_", "-"))
+	projectName := strings.ToLower(strings.ReplaceAll(project.Name, "_", "-"))
+	return customerName + "-" + domainName + "-" + projectName + "-" + roleName
+}
+
+func findGroupByID(groups []keystoneGroup, groupID string) (group keystoneGroup, ok bool) {
+	for _, group := range groups {
+		if group.ID == groupID {
+			return group, true
+		}
+	}
+	return group, false
+}
+
+func (c *Connector) getUser(ctx context.Context, userID string, token string) (*userResponse, error) {
+	// https://developer.openstack.org/api-ref/identity/v3/#show-user-details
+	userURL := c.cfg.BaseURL + "/keystone/v3/users/" + userID
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", userURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("X-Auth-Token", token)
+	req = req.WithContext(ctx)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, err
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	user := userResponse{}
+	err = json.Unmarshal(data, &user)
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+func (c *Connector) getTokenInfo(ctx context.Context, token string) (*tokenInfo, error) {
+	// https://developer.openstack.org/api-ref/identity/v3/#password-authentication-with-unscoped-authorization
+	authTokenURL := c.cfg.BaseURL + "/keystone/v3/auth/tokens"
+	c.logger.Infof("Fetching Keystone token info: %s", authTokenURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authTokenURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Auth-Token", token)
 	req.Header.Set("X-Subject-Token", token)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		err = fmt.Errorf("inspect token failed: %s body=%s", resp.Status, string(b))
-		return
-	}
-
-	var at authTokensResp
-	if err = json.NewDecoder(resp.Body).Decode(&at); err != nil {
-		return
-	}
-	userID = at.Token.User.ID
-	name = at.Token.User.Name
-	email = at.Token.User.Email
-	domainID = at.Token.User.Domain.ID
-	projectID = at.Token.Project.ID
-	return
-}
-
-func (c *Connector) getUserEmail(token, userID string) (string, error) {
-	req, _ := http.NewRequest("GET", strings.TrimRight(c.cfg.BaseURL, "/")+"/v3/users/"+userID, nil)
-	req.Header.Set("X-Auth-Token", token)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("users get failed: %s", resp.Status)
-	}
-	var ur struct {
-		User struct {
-			Email string `json:"email"`
-		} `json:"user"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&ur); err != nil {
-		return "", err
-	}
-	return ur.User.Email, nil
-}
-
-func (c *Connector) getGroups(token, userID string) ([]string, error) {
-	req, _ := http.NewRequest("GET", strings.TrimRight(c.cfg.BaseURL, "/")+"/v3/groups?user_id="+userID, nil)
-	req.Header.Set("X-Auth-Token", token)
-
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("groups list failed: %s", resp.Status)
-	}
-	var gr groupsResp
-	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(gr.Groups))
-	for _, g := range gr.Groups {
-		out = append(out, g.Name)
-	}
-	return out, nil
-}
-
-// getKeystoneTokenFromSAML submits a SAML response to the Shibboleth SAML2 POST endpoint
-// to establish a session and then gets a Keystone token via the federation auth endpoint.
-func (c *Connector) getKeystoneTokenFromSAML(samlResponse, relayState string) (string, error) {
-	c.logger.Infof("Getting Keystone token from SAML response with RelayState: %s", relayState)
-	ksBase := strings.TrimRight(c.cfg.BaseURL, "/")
-
-	// Replace any {IdP} placeholder with the actual IdentityProviderID
-	saml2PostPath := strings.Replace(c.cfg.ShibbolethSAML2PostPath, "{IdP}", c.cfg.IdentityProviderID, -1)
-	c.logger.Infof("Using Shibboleth SAML2 POST path: %s", saml2PostPath)
-
-	// Prepare the SAML POST request to establish a federation session
-	form := url.Values{}
-	form.Add("SAMLResponse", samlResponse)
-	if relayState != "" {
-		c.logger.Infof("Adding RelayState to SAML POST: %s", relayState)
-		form.Add("RelayState", relayState)
-	} else {
-		c.logger.Warn("No RelayState provided for SAML POST request")
-	}
-
-	// Submit SAML response to Shibboleth SAML2 POST endpoint
-	samlPostURL := fmt.Sprintf("%s%s", ksBase, saml2PostPath)
-	c.logger.Infof("Submitting SAML response to: %s", samlPostURL)
-	req, err := http.NewRequest("POST", samlPostURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		c.logger.Errorf("Error creating SAML POST request: %v", err)
-		return "", fmt.Errorf("creating SAML POST request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	c.logger.Infof("SAML POST request headers: %v", req.Header)
-
-	// Use a client that doesn't automatically follow redirects
-	clientNoRedirect := &http.Client{
-		Timeout: c.client.Timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-
-	resp, err := clientNoRedirect.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("submitting SAML response: %w", err)
-	}
 	defer resp.Body.Close()
 
-	// Extract federation cookie(s) from response
-	c.logger.Infof("Response status from SAML POST: %s", resp.Status)
-	c.logger.Infof("Response headers: %v", resp.Header)
-
-	var federationCookies []*http.Cookie
-	for _, cookie := range resp.Cookies() {
-		c.logger.Infof("Cookie in response: Name=%s, Domain=%s, Path=%s", cookie.Name, cookie.Domain, cookie.Path)
-		if strings.Contains(cookie.Name, "_shibsession_") ||
-			strings.Contains(cookie.Name, "_saml_") ||
-			strings.Contains(cookie.Name, "_openstack_") {
-			c.logger.Infof("Found federation cookie: %s", cookie.Name)
-			federationCookies = append(federationCookies, cookie)
-		}
+	if resp.StatusCode >= 400 {
+		c.logger.Errorf("keystone: get token info: error status code %d: %s\n", resp.StatusCode, strings.ReplaceAll(string(data), "\n", ""))
+		return nil, fmt.Errorf("keystone: get token info: error status code %d", resp.StatusCode)
 	}
 
-	if len(federationCookies) == 0 {
-		c.logger.Error("No federation cookies found in response")
-		return "", fmt.Errorf("no federation cookies found in response")
-	} else {
-		c.logger.Infof("Found %d federation cookies", len(federationCookies))
+	tokenResp := &tokenResponse{}
+	err = json.Unmarshal(data, tokenResp)
+	if err != nil {
+		return nil, err
 	}
 
-	// Now use the federation cookies to get a token from Keystone
-	return c.getKeystoneTokenWithFederationCookies(federationCookies)
+	return &tokenResp.Token, nil
 }
 
 // getKeystoneTokenFromFederation gets a Keystone token using an existing federation session.
@@ -458,11 +680,4 @@ func truncateToken(token string) string {
 		return token[:47] + "..."
 	}
 	return token
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

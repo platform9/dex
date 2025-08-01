@@ -10,34 +10,26 @@ import (
 // Keystone must append the token into the redirect query (?ks_token=...).
 // If it can't, set TokenInQuery to false and extend the connector for a relay path.
 type Config struct {
-	// Keystone base URL, e.g. https://keystone.example.com:5000
+	// BaseURL is Keystone base URL, e.g. https://keystone.test.com:5000
 	BaseURL string `json:"baseURL"`
-
-	// Keystone federation identifiers
-	IdentityProviderID string `json:"identityProviderID"` // e.g. "myidp"
-	ProtocolID         string `json:"protocolID"`         // usually "saml2"
-
-	// Optional static scope (pick one)
-	ProjectID string `json:"projectID,omitempty"`
-	DomainID  string `json:"domainID,omitempty"`
-
-	// True if Keystone (or a proxy) puts the token into the redirect query (?ks_token=...)
-	TokenInQuery bool `json:"tokenInQuery"`
-
-	// HTTP timeout (seconds)
-	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
-
-	// Enable SSO federation flow using Shibboleth
-	EnableFederation bool `json:"enableFederation,omitempty"`
-
-	// Shibboleth SSO login endpoint path, typically '/sso/{IdP}/Shibboleth.sso/Login'
+	// CustomerName is customer name to be used in group names
+	CustomerName string `json:"customerName"`
+	// AdminUsername is Keystone admin username
+	AdminUsername string `json:"adminUsername"`
+	// AdminPassword is Keystone admin password
+	AdminPassword string `json:"adminPassword"`
+	// IdentityProviderID is Keystone identity provider ID
+	IdentityProviderID string `json:"identityProviderID"`
+	// ProtocolID is protocol name, typically "saml2"
+	ProtocolID string `json:"protocolID"`
+	// ShibbolethLoginPath is Shibboleth SSO login endpoint path, typically '/sso/{IdP}/Shibboleth.sso/Login'
 	ShibbolethLoginPath string `json:"shibbolethLoginPath,omitempty"`
-
-	// Shibboleth SSO SAML2 POST endpoint path, typically '/sso/{IdP}/Shibboleth.sso/SAML2/POST'
+	// ShibbolethSAML2PostPath is Shibboleth SSO SAML2 POST endpoint path, typically '/sso/{IdP}/Shibboleth.sso/SAML2/POST'
 	ShibbolethSAML2PostPath string `json:"shibbolethSAML2PostPath,omitempty"`
-
-	// OS-FEDERATION identity providers auth path, typically '/keystone/v3/OS-FEDERATION/identity_providers/{IdP}/protocols/saml2/auth'
+	// FederationAuthPath is OS-FEDERATION identity providers auth path, typically '/keystone/v3/OS-FEDERATION/identity_providers/{IdP}/protocols/saml2/auth'
 	FederationAuthPath string `json:"federationAuthPath,omitempty"`
+	// DomainID is domain ID, typically "default"
+	DomainID string `json:"domainID,omitempty"`
 }
 
 // Validate returns error if config is invalid.
@@ -51,23 +43,21 @@ func (c *Config) Validate() error {
 	if c.ProtocolID == "" {
 		return errf("protocolID is required")
 	}
-	if c.ProjectID != "" && c.DomainID != "" {
-		return errf("only one of projectID or domainID may be set")
+	if c.ShibbolethLoginPath == "" {
+		return errf("shibbolethLoginPath is required")
 	}
-
-	// Validate federation parameters if federation is enabled
-	if c.EnableFederation {
-		if c.ShibbolethLoginPath == "" {
-			return errf("shibbolethLoginPath is required when federation is enabled")
-		}
-		if c.ShibbolethSAML2PostPath == "" {
-			return errf("shibbolethSAML2PostPath is required when federation is enabled")
-		}
-		if c.FederationAuthPath == "" {
-			return errf("federationAuthPath is required when federation is enabled")
-		}
+	if c.ShibbolethSAML2PostPath == "" {
+		return errf("shibbolethSAML2PostPath is required")
 	}
-
+	if c.FederationAuthPath == "" {
+		return errf("federationAuthPath is required")
+	}
+	if c.DomainID == "" {
+		return errf("domainID is required")
+	}
+	if c.CustomerName == "" {
+		return errf("customerName is required")
+	}
 	return nil
 }
 
