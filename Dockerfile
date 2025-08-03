@@ -1,6 +1,6 @@
 ARG BASE_IMAGE=alpine
 
-FROM golang:1.23-alpine AS builder
+FROM golang:1.23-bullseye AS builder
 
 WORKDIR /usr/local/src/dex
 
