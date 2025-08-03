@@ -1,0 +1,135 @@
+storage/kubernetes/k8sapi/time.go:76:42: t.Format undefined (type Time has no field or method Format) (typecheck)
+	copied, _ := time.Parse(time.RFC3339, t.Format(time.RFC3339))
+	                                        ^
+storage/kubernetes/k8sapi/time.go:127:24: t.UTC undefined (type Time has no field or method UTC) (typecheck)
+	return json.Marshal(t.UTC().Format(time.RFC3339))
+	                      ^
+storage/kubernetes/k8sapi/time.go:137:11: t.UTC undefined (type Time has no field or method UTC) (typecheck)
+	return t.UTC().Format(time.RFC3339), nil
+	         ^
+storage/ent/schema/keys.go:35:29: undefined: jose (typecheck)
+		field.JSON("signing_key", jose.JSONWebKey{}),
+		                          ^
+storage/ent/schema/keys.go:36:33: undefined: jose (typecheck)
+		field.JSON("signing_key_pub", jose.JSONWebKey{}),
+		                              ^
+cmd/dex/config.go:114:5: p.Hash undefined (type *password has no field or method Hash) (typecheck)
+		p.Hash = []byte(data.Hash)
+		  ^
+cmd/dex/config.go:126:4: p.Hash undefined (type *password has no field or method Hash) (typecheck)
+	p.Hash = hashBytes
+	  ^
+cmd/dex/serve.go:471:3: undefined: api (typecheck)
+		api.RegisterDexServer(grpcSrv, server.NewAPI(serverConfig.Storage, logger, version))
+		^
+connector/keystone/keystone.go:1: : # github.com/dexidp/dex/connector/keystone [github.com/dexidp/dex/connector/keystone.test]
+connector/keystone/keystone_test.go:54:17: undefined: domain
+connector/keystone/keystone_test.go:222:30: cannot use testDomain (untyped string constant "default") as domainKeystone value in struct literal
+connector/keystone/keystone_test.go:299:32: cannot use tt.input.domain (variable of type string) as domainKeystone value in struct literal
+connector/keystone/keystone_test.go:336:30: cannot use testDomain (untyped string constant "default") as domainKeystone value in struct literal
+connector/keystone/keystone_test.go:361:30: cannot use testDomain (untyped string constant "default") as domainKeystone value in struct literal
+connector/keystone/keystone_test.go:391:30: cannot use testDomain (untyped string constant "default") as domainKeystone value in struct literal
+connector/keystone/keystone_test.go:427:30: cannot use testDomain (untyped string constant "default") as domainKeystone value in struct literal (typecheck)
+// Package keystone provides authentication strategy using Keystone.
+connector/ldap/ldap.go:215:11: undefined: ldap (typecheck)
+	Entry    ldap.Entry `json:"entry"`
+	         ^
+connector/ldap/ldap.go:323:57: undefined: ldap (typecheck)
+func (c *ldapConnector) do(_ context.Context, f func(c *ldap.Conn) error) error {
+                                                        ^
+connector/ldap/ldap.go:360:17: undefined: ldap (typecheck)
+func getAttrs(e ldap.Entry, name string) []string {
+                ^
+connector/oidc/oidc_test.go:502:20: undefined: jose (typecheck)
+func newToken(key *jose.JSONWebKey, claims map[string]interface{}) (string, error) {
+                   ^
+connector/openshift/openshift.go:207:96: user.Name undefined (type user has no field or method Name) (typecheck)
+			return identity, fmt.Errorf("openshift: user %q is not in any of the required groups", user.Name)
+			                                                                                            ^
+connector/openshift/openshift.go:212:27: user.UID undefined (type user has no field or method UID) (typecheck)
+		UserID:            user.UID,
+		                        ^
+connector/openshift/openshift.go:213:27: user.Name undefined (type user has no field or method Name) (typecheck)
+		Username:          user.Name,
+		                        ^
+connector/openshift/openshift.go:214:27: user.Name undefined (type user has no field or method Name) (typecheck)
+		PreferredUsername: user.Name,
+		                        ^
+connector/openshift/openshift_test.go:81:20: u.Name undefined (type user has no field or method Name) (typecheck)
+	expectEquals(t, u.Name, "jdoe")
+	                  ^
+connector/openshift/openshift_test.go:139:20: u.Name undefined (type user has no field or method Name) (typecheck)
+	expectEquals(t, u.Name, "jdoe")
+	                  ^
+server/server.go:18:2: could not import sync/atomic (-: could not load export data: internal error in importing "sync/atomic" (unsupported version: 2); please report an issue) (typecheck)
+	"sync/atomic"
+	^
+server/api.go:41:2: undefined: api (typecheck)
+	api.UnimplementedDexServer
+	^
+server/api_test.go:26:2: undefined: api (typecheck)
+	api.DexClient
+	^
+server/rotation.go:98:17: k.GetKeys undefined (type keyRotator has no field or method GetKeys) (typecheck)
+	keys, err := k.GetKeys()
+	               ^
+server/templates.go:57:11: undefined: sprig (typecheck)
+	funcs := sprig.FuncMap()
+	         ^
+server/api_test.go:86:25: client.CreatePassword undefined (type *apiClient has no field or method CreatePassword) (typecheck)
+	if resp, err := client.CreatePassword(ctx, &createReq); err != nil || resp.AlreadyExists {
+	                       ^
+server/api_test.go:94:23: client.CreatePassword undefined (type *apiClient has no field or method CreatePassword) (typecheck)
+	if resp, _ := client.CreatePassword(ctx, &createReq); !resp.AlreadyExists {
+	                     ^
+server/api_test.go:103:32: client.VerifyPassword undefined (type *apiClient has no field or method VerifyPassword) (typecheck)
+	goodVerifyResp, err := client.VerifyPassword(ctx, goodVerifyReq)
+	                              ^
+server/api_test.go:119:36: client.VerifyPassword undefined (type *apiClient has no field or method VerifyPassword) (typecheck)
+	badEmailVerifyResp, err := client.VerifyPassword(ctx, badEmailVerifyReq)
+	                                  ^
+server/api_test.go:135:35: client.VerifyPassword undefined (type *apiClient has no field or method VerifyPassword) (typecheck)
+	badPassVerifyResp, err := client.VerifyPassword(ctx, badPassVerifyReq)
+	                                 ^
+server/api_test.go:151:22: client.UpdatePassword undefined (type *apiClient has no field or method UpdatePassword) (typecheck)
+	if _, err := client.UpdatePassword(ctx, &updateReq); err != nil {
+	                    ^
+server/api_test.go:168:22: client.DeletePassword undefined (type *apiClient has no field or method DeletePassword) (typecheck)
+	if _, err := client.DeletePassword(ctx, &deleteReq); err != nil {
+	                    ^
+server/api_test.go:300:26: client.ListRefresh undefined (type *apiClient has no field or method ListRefresh) (typecheck)
+	listResp, err := client.ListRefresh(ctx, &listReq)
+	                        ^
+server/api_test.go:320:22: client.RevokeRefresh undefined (type *apiClient has no field or method RevokeRefresh) (typecheck)
+	resp, err := client.RevokeRefresh(ctx, &revokeReq)
+	                    ^
+server/api_test.go:331:21: client.RevokeRefresh undefined (type *apiClient has no field or method RevokeRefresh) (typecheck)
+	resp, err = client.RevokeRefresh(ctx, &revokeReq)
+	                   ^
+server/api_test.go:339:23: client.ListRefresh undefined (type *apiClient has no field or method ListRefresh) (typecheck)
+	if resp, _ := client.ListRefresh(ctx, &listReq); len(resp.RefreshTokens) != 0 {
+	                     ^
+server/api_test.go:357:23: client.CreateClient undefined (type *apiClient has no field or method CreateClient) (typecheck)
+		resp, err := client.CreateClient(ctx, &api.CreateClientReq{
+		                    ^
+server/api_test.go:385:23: client.DeleteClient undefined (type *apiClient has no field or method DeleteClient) (typecheck)
+		resp, err := client.DeleteClient(ctx, &api.DeleteClientReq{
+		                    ^
+server/api_test.go:453:24: client.UpdateClient undefined (type *apiClient has no field or method UpdateClient) (typecheck)
+			resp, err := client.UpdateClient(ctx, tc.req)
+			                    ^
+storage/kubernetes/storage_test.go:42:5: s.Require undefined (type *StorageTestSuite has no field or method Require) (typecheck)
+		s.Require().NoError(err)
+		  ^
+storage/kubernetes/storage_test.go:63:4: s.Require undefined (type *StorageTestSuite has no field or method Require) (typecheck)
+	s.Require().NoError(err)
+	  ^
+storage/kubernetes/storage_test.go:81:7: s.T undefined (type *StorageTestSuite has no field or method T) (typecheck)
+				s.T().Fatalf("delete all %q failed: %v", resource, err)
+				  ^
+storage/kubernetes/storage_test.go:87:25: s.T undefined (type *StorageTestSuite has no field or method T) (typecheck)
+	conformance.RunTests(s.T(), newStorage)
+	                       ^
+storage/kubernetes/storage_test.go:88:36: s.T undefined (type *StorageTestSuite has no field or method T) (typecheck)
+	conformance.RunTransactionTests(s.T(), newStorage)
+	                                  ^
