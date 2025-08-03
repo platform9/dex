@@ -19,10 +19,10 @@ jobs:
         -   name: Set up Go
             uses: actions/setup-go@v4
             with:
-                go-version-file: 'go.mod'
+                go-version-file: '1.23'
         -   name: Install gosec
             run: |
-                go install github.com/securego/gosec/v2/cmd/gosec@v2.22.6
+                go install github.com/securego/gosec/v2/cmd/gosec@latest
                 echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
                 gosec -h  # Debug step: check if gosec is installed
         # -   name: Run gosec
