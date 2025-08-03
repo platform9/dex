@@ -19,7 +19,7 @@ import (
 const (
 	apiURL   = "https://api.linkedin.com/v2"
 	authURL  = "https://www.linkedin.com/oauth/v2/authorization"
-	tokenURL = "https://www.linkedin.com/oauth/v2/accessToken"
+	tokenURL = "https://www.linkedin.com/oauth/v2/accessToken" // #nosec G101 -- Not a credential
 )
 
 // Config holds configuration options for LinkedIn logins.

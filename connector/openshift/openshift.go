@@ -268,7 +268,7 @@ func newHTTPClient(insecureCA bool, rootCA string) (*http.Client, error) {
 	tlsConfig := tls.Config{MinVersion: tls.VersionTLS12,}
 	if insecureCA {
 		// tlsConfig = tls.Config{InsecureSkipVerify: true}
-		tlsConfig.InsecureSkipVerify = true
+		tlsConfig.InsecureSkipVerify = true // #nosec G402 - explicitly allowed in dev/test only
 	} else if rootCA != "" {
 		// tlsConfig = tls.Config{RootCAs: x509.NewCertPool(),}
 		tlsConfig.RootCAs = x509.NewCertPool()
