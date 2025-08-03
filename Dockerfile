@@ -1,10 +1,13 @@
 ARG BASE_IMAGE=alpine
 
-FROM golang:1.23-bullseye AS builder
+FROM golang:1.23-alpine3.18 AS builder
 
 WORKDIR /usr/local/src/dex
 
-RUN apk add --no-cache --update alpine-sdk ca-certificates openssl
+RUN apk add --no-cache --update alpine-sdk ca-certificates openssl sqlite-dev gcc musl-dev make curl
+
+ENV CGO_ENABLED=1
+ENV CGO_CFLAGS="-DSQLITE_DISABLE_INTRINSIC -DSQLITE_OS_UNIX=1"
 
 ARG TARGETOS
 ARG TARGETARCH
