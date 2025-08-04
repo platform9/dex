@@ -249,7 +249,7 @@ func (c *Connector) getUserGroups(ctx context.Context, userID string, token stri
 }
 
 func (c *Connector) getRoleAssignments(ctx context.Context, token string, opts getRoleAssignmentsOptions) ([]roleAssignment, error) {
-	endpoint := fmt.Sprintf("%s/v3/role_assignments?", c.cfg.BaseURL)
+	endpoint := fmt.Sprintf("%s/keystone/v3/role_assignments?", c.cfg.BaseURL)
 	// note: group and user filters are mutually exclusive
 	if len(opts.userID) > 0 {
 		endpoint = fmt.Sprintf("%seffective&user.id=%s", endpoint, opts.userID)
@@ -429,7 +429,7 @@ func pruneDuplicates(ss []string) []string {
 
 func (c *Connector) getRoles(ctx context.Context, token string) ([]role, error) {
 	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail,list-roles-detail#list-roles
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/v3/roles", c.cfg.BaseURL), nil)
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/keystone/v3/roles", c.cfg.BaseURL), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +461,7 @@ func (c *Connector) getRoles(ctx context.Context, token string) ([]role, error) 
 
 func (c *Connector) getProjects(ctx context.Context, token string) ([]project, error) {
 	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail,list-roles-detail#list-roles
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/v3/projects", c.cfg.BaseURL), nil)
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/keystone/v3/projects", c.cfg.BaseURL), nil)
 	if err != nil {
 		return nil, err
 	}
