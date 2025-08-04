@@ -1,0 +1,14 @@
+* G404 - /home/runner/work/dex/dex/storage/kubernetes/storage.go:737 (HIGH) - Use of weak random number generator (math/rand or math/rand/v2 instead of crypto/rand)
+* G402 - /home/runner/work/dex/dex/storage/sql/config.go:320 (HIGH) - TLS MinVersion too low.
+* G402 - /home/runner/work/dex/dex/storage/ent/mysql.go:130 (HIGH) - TLS MinVersion too low.
+* G402 - /home/runner/work/dex/dex/examples/grpc-client/client.go:33-36 (HIGH) - TLS MinVersion too low.
+* G402 - /home/runner/work/dex/dex/examples/example-app/main.go:44 (HIGH) - TLS MinVersion too low.
+* G402 - /home/runner/work/dex/dex/connector/openshift/openshift.go:272 (HIGH) - TLS MinVersion too low.
+* G402 - /home/runner/work/dex/dex/connector/openshift/openshift.go:268 (HIGH) - TLS MinVersion too low.
+* G402 - /home/runner/work/dex/dex/connector/github/github.go:213 (HIGH) - TLS MinVersion too low.
+* G402 - /home/runner/work/dex/dex/connector/openshift/openshift.go:270 (HIGH) - TLS InsecureSkipVerify set true.
+* G402 - /home/runner/work/dex/dex/connector/oauth/oauth.go:129 (HIGH) - TLS InsecureSkipVerify set true.
+* G402 - /home/runner/work/dex/dex/connector/ldap/ldap.go:257 (HIGH) - TLS InsecureSkipVerify may be true.
+* G402 - /home/runner/work/dex/dex/connector/keystone/keystone.go:186 (HIGH) - TLS InsecureSkipVerify may be true.
+* G101 - /home/runner/work/dex/dex/connector/saml/saml.go:46 (HIGH) - Potential hardcoded credentials
+* G101 - /home/runner/work/dex/dex/connector/linkedin/linkedin.go:21 (HIGH) - Potential hardcoded credentials
