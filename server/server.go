@@ -34,7 +34,7 @@ import (
 	"github.com/dexidp/dex/connector/gitlab"
 	"github.com/dexidp/dex/connector/google"
 	"github.com/dexidp/dex/connector/keystone"
-	"github.com/dexidp/dex/connector/keystonefed"
+
 	"github.com/dexidp/dex/connector/ldap"
 	"github.com/dexidp/dex/connector/linkedin"
 	"github.com/dexidp/dex/connector/microsoft"
@@ -550,7 +550,7 @@ type ConnectorConfig interface {
 // depending on the connector type.
 var ConnectorsConfig = map[string]func() ConnectorConfig{
 	"keystone":        func() ConnectorConfig { return new(keystone.Config) },
-	"keystonefed":     func() ConnectorConfig { return new(keystonefed.Config) },
+	"keystonefed":     func() ConnectorConfig { return new(keystone.FederationConfig) },
 	"mockCallback":    func() ConnectorConfig { return new(mock.CallbackConfig) },
 	"mockPassword":    func() ConnectorConfig { return new(mock.PasswordConfig) },
 	"ldap":            func() ConnectorConfig { return new(ldap.Config) },
