@@ -1,6 +1,7 @@
 package keystone
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,11 @@ import (
 
 	"github.com/dexidp/dex/connector"
 	"github.com/dexidp/dex/pkg/log"
+)
+
+var (
+	_ connector.CallbackConnector = &FederationConnector{}
+	_ connector.RefreshConnector  = &FederationConnector{}
 )
 
 // FederationConnector implements the connector interface for Keystone federation authentication
@@ -234,6 +240,64 @@ func (c *FederationConnector) Close() error {
 	return nil
 }
 
-var (
-	_ connector.CallbackConnector = &FederationConnector{}
-)
+// Refresh is used to refresh identity during token refresh.
+// It checks if the user still exists and refreshes their group membership.
+func (c *FederationConnector) Refresh(
+	ctx context.Context, scopes connector.Scopes, identity connector.Identity,
+) (connector.Identity, error) {
+	c.logger.Infof("Refresh called for user %s", identity.UserID)
+	ksBase := normalizeKeystoneURL(c.cfg.Host)
+
+	// Get admin token to perform operations
+	adminToken, err := getAdminTokenUnscoped(ctx, c.client, ksBase, c.cfg.AdminUsername, c.cfg.AdminPassword)
+	if err != nil {
+		return identity, fmt.Errorf("keystone federation: failed to obtain admin token: %v", err)
+	}
+
+	// Check if the user still exists
+	user, err := getUser(ctx, c.client, ksBase, identity.UserID, adminToken)
+	if err != nil {
+		return identity, fmt.Errorf("keystone federation: failed to get user: %v", err)
+	}
+	if user == nil {
+		return identity, fmt.Errorf("keystone federation: user %q does not exist", identity.UserID)
+	}
+
+	// Create a token info object with basic user info
+	tokenInfo := &tokenInfo{
+		User: userKeystone{
+			Name: identity.Username,
+			ID:   identity.UserID,
+		},
+	}
+
+	// If there is a token associated with this refresh token, use that to get more info
+	var data connectorData
+	if err := json.Unmarshal(identity.ConnectorData, &data); err != nil {
+		return identity, fmt.Errorf("keystone federation: unmarshal connector data: %v", err)
+	}
+
+	// If we have a stored token, try to use it to get token info
+	if len(data.Token) > 0 {
+		c.logger.Infof("Using stored token to get token info: %s", truncateToken(data.Token))
+		tokenInfoFromStored, err := getTokenInfo(ctx, c.client, ksBase, data.Token, c.logger)
+		if err == nil {
+			// Only use the stored token info if we could retrieve it successfully
+			tokenInfo = tokenInfoFromStored
+		} else {
+			c.logger.Warnf("Could not get token info from stored token: %v", err)
+		}
+	}
+
+	// If groups scope is requested, refresh the groups
+	if scopes.Groups {
+		c.logger.Infof("Refreshing groups for user %s", identity.UserID)
+		var err error
+		identity.Groups, err = getAllGroupsForUser(ctx, c.client, ksBase, adminToken, c.cfg.CustomerName, c.cfg.Domain, tokenInfo, c.logger)
+		if err != nil {
+			return identity, fmt.Errorf("keystone federation: failed to get groups: %v", err)
+		}
+	}
+
+	return identity, nil
+}
