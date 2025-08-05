@@ -73,13 +73,11 @@ func NewFederationConnector(cfg FederationConfig, logger log.Logger) (*Federatio
 }
 
 func (c *FederationConnector) LoginURL(scopes connector.Scopes, callbackURL, state string) (string, error) {
-	c.logger.Infof("LoginURL called with callbackURL=%s, state=%s", callbackURL, state)
 	ksBase := normalizeKeystoneURL(c.cfg.Host)
 
 	// Store the callback URL and state in the connector for use during callback handling
 	c.callbackURL = callbackURL
 	c.state = state
-	c.logger.Infof("Stored callback URL=%s and state=%s in connector", callbackURL, state)
 
 	// Use Shibboleth SSO login path for federation
 	ssoLoginPath := c.cfg.ShibbolethLoginPath
@@ -95,18 +93,13 @@ func (c *FederationConnector) LoginURL(scopes connector.Scopes, callbackURL, sta
 	target := fmt.Sprintf("%s?state=%s", callbackURL, state)
 	q := u.Query()
 	q.Set("target", target)
-	c.logger.Infof("Setting target=%s for federation login", target)
 	u.RawQuery = q.Encode()
+	c.logger.Debugf("Shibboleth login URL with dex callback=%s", u.String())
 	return u.String(), nil
 }
 
 func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Request) (connector.Identity, error) {
-	c.logger.Infof("HandleCallback received request: URL=%s, Method=%s", r.URL.String(), r.Method)
-	c.logger.Infof("Request headers: %v", r.Header)
-	c.logger.Infof("Request cookies count: %d", len(r.Cookies()))
-	for i, cookie := range r.Cookies() {
-		c.logger.Infof("Cookie[%d]: Name=%s, Domain=%s", i, cookie.Name, cookie.Domain)
-	}
+	c.logger.Debugf("Dex Callback received: URL=%s, Method=%s", r.URL.String(), r.Method)
 
 	var ksToken string
 	var err error
@@ -115,14 +108,13 @@ func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Re
 
 	// Get state from query parameters
 	state := r.URL.Query().Get("state")
-	c.logger.Infof("State from query: %s", state)
 	if state == "" {
 		c.logger.Error("Missing state in request")
 		return connector.Identity{}, fmt.Errorf("missing state")
 	}
 
 	// Log state information
-	c.logger.Infof("Processing callback for state=%s", state)
+	c.logger.Debugf("Processing callback for state=%s", state)
 
 	// Extract federation cookies and use them to get a keystone token
 	ksToken, err = c.getKeystoneTokenFromFederation(r)
@@ -133,7 +125,7 @@ func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Re
 	c.logger.Infof("Successfully obtained token from federation cookies")
 
 	ksBase := normalizeKeystoneURL(c.cfg.Host)
-	c.logger.Infof("Retrieving user info with token: %s", truncateToken(ksToken))
+	c.logger.Debugf("Retrieving user info with")
 	tokenInfo, err = getTokenInfo(r.Context(), c.client, ksBase, ksToken, c.logger)
 	if err != nil {
 		return connector.Identity{}, err
@@ -176,13 +168,12 @@ func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Re
 // This method extracts federation cookies from the request and uses them to authenticate
 // with Keystone's federation endpoint.
 func (c *FederationConnector) getKeystoneTokenFromFederation(r *http.Request) (string, error) {
-	c.logger.Infof("Getting Keystone token from federation cookies")
+	c.logger.Debugf("Getting Keystone token from federation cookies")
 	ksBase := normalizeKeystoneURL(c.cfg.Host)
-	c.logger.Infof("Using federation auth path: %s", c.cfg.FederationAuthPath)
 
 	// Prepare the federation auth request
 	federationAuthURL := fmt.Sprintf("%s%s", ksBase, c.cfg.FederationAuthPath)
-	c.logger.Infof("Requesting Keystone token from: %s", federationAuthURL)
+	c.logger.Infof("Requesting Keystone token from federation auth endpoint: %s", federationAuthURL)
 
 	req, err := http.NewRequest("GET", federationAuthURL, nil)
 	if err != nil {
@@ -192,7 +183,6 @@ func (c *FederationConnector) getKeystoneTokenFromFederation(r *http.Request) (s
 
 	// Copy all cookies from the original request to maintain the federation session
 	for _, cookie := range r.Cookies() {
-		c.logger.Infof("Adding cookie to federation request: %s", cookie.Name)
 		req.AddCookie(cookie)
 	}
 
@@ -204,7 +194,7 @@ func (c *FederationConnector) getKeystoneTokenFromFederation(r *http.Request) (s
 		req.Header.Set("Referer", referer)
 	}
 
-	c.logger.Infof("Federation auth request headers: %v", req.Header)
+	c.logger.Debugf("Federation auth request headers: %v", req.Header)
 
 	// Use a client that doesn't automatically follow redirects
 	clientNoRedirect := &http.Client{
@@ -221,8 +211,8 @@ func (c *FederationConnector) getKeystoneTokenFromFederation(r *http.Request) (s
 	}
 	defer resp.Body.Close()
 
-	c.logger.Infof("Federation auth response status: %s", resp.Status)
-	c.logger.Infof("Federation auth response headers: %v", resp.Header)
+	c.logger.Debugf("Federation auth response status: %s", resp.Status)
+	c.logger.Debugf("Federation auth response headers: %v", resp.Header)
 
 	// Extract the token from the X-Subject-Token header
 	token := resp.Header.Get("X-Subject-Token")
@@ -231,7 +221,7 @@ func (c *FederationConnector) getKeystoneTokenFromFederation(r *http.Request) (s
 		return "", fmt.Errorf("no X-Subject-Token found in federation auth response")
 	}
 
-	c.logger.Infof("Successfully obtained Keystone token from federation: %s", truncateToken(token))
+	c.logger.Debugf("Successfully obtained Keystone token from federation")
 	return token, nil
 }
 
@@ -279,7 +269,7 @@ func (c *FederationConnector) Refresh(
 
 	// If we have a stored token, try to use it to get token info
 	if len(data.Token) > 0 {
-		c.logger.Infof("Using stored token to get token info: %s", truncateToken(data.Token))
+		c.logger.Debugf("Using stored token to get token info")
 		tokenInfoFromStored, err := getTokenInfo(ctx, c.client, ksBase, data.Token, c.logger)
 		if err == nil {
 			// Only use the stored token info if we could retrieve it successfully

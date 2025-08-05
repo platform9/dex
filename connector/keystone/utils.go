@@ -299,7 +299,7 @@ func getUser(ctx context.Context, client *http.Client, baseURL, userID, token st
 func getTokenInfo(ctx context.Context, client *http.Client, baseURL, token string, logger log.Logger) (*tokenInfo, error) {
 	// https://developer.openstack.org/api-ref/identity/v3/#password-authentication-with-unscoped-authorization
 	authTokenURL := baseURL + "/keystone/v3/auth/tokens"
-	logger.Infof("Fetching Keystone token info: %s", authTokenURL)
+	logger.Debugf("Fetching Keystone token info: %s", authTokenURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authTokenURL, nil)
 	if err != nil {
 		return nil, err
