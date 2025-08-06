@@ -53,12 +53,6 @@ bin/example-app:
 	@mkdir -p bin/
 	@cd examples/ && go install -v -ldflags $(LD_FLAGS) $(REPO_PATH)/examples/example-app
 
-.PHONY: release-binary
-release-binary: LD_FLAGS = "-w -X main.version=$(VERSION) -extldflags \"-static\""
-release-binary: generate
-	@go build -o /go/bin/dex -v -buildvcs=false -ldflags $(LD_FLAGS) $(REPO_PATH)/cmd/dex
-	@go build -o /go/bin/docker-entrypoint -v -buildvcs=false -ldflags $(LD_FLAGS) $(REPO_PATH)/cmd/docker-entrypoint
-
 ##@ Generate
 
 .PHONY: generate
@@ -68,51 +62,6 @@ generate: generate-proto generate-proto-internal generate-ent go-mod-tidy ## Run
 generate-ent: ## Generate code for database ORM.
 	@go generate $(REPO_PATH)/storage/ent/
 
-test:
-	@go test -v ./...
-
-testrace:
-	@go test -v --race ./...
-
-.PHONY: kind-up kind-down kind-tests
-kind-up:
-	@mkdir -p bin/test
-	@kind create cluster --image ${KIND_NODE_IMAGE} --kubeconfig ${KIND_TMP_DIR}
-
-kind-down:
-	@kind delete cluster
-	rm ${KIND_TMP_DIR}
-
-kind-tests: export DEX_KUBERNETES_CONFIG_PATH=${KIND_TMP_DIR}
-kind-tests: testall
-
-.PHONY: lint lint-fix
-lint: ## Run linter
-	golangci-lint run
-
-.PHONY: fix
-fix: ## Fix lint violations
-	golangci-lint run --fix
-
-.PHONY: docker-image
-docker-image:
-	docker build -t $(DOCKER_IMAGE) .
-
-.PHONY: verify-proto
-verify-proto: proto
-	@./scripts/git-diff
-
-clean:
-	@rm -rf bin/
-
-testall: testrace
-
-FORCE:
-
-.PHONY: test testrace testall
-
-.PHONY: proto
-proto:
 .PHONY: generate-proto
 generate-proto: ## Generate the Dex client's protobuf code.
 	@protoc --go_out=paths=source_relative:. --go-grpc_out=paths=source_relative:. api/v2/*.proto
