@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"reflect"
@@ -311,6 +312,7 @@ func TestIncorrectCredentialsLogin(t *testing.T) {
 		client: http.DefaultClient,
 		Host:   keystoneURL, Domain: domainKeystone{ID: testDomainID},
 		AdminUsername: adminUser, AdminPassword: adminPass,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 	_, validPW, err := c.Login(context.Background(), s, adminUser, invalidPass)
@@ -447,6 +449,7 @@ func TestValidUserLogin(t *testing.T) {
 				client: http.DefaultClient,
 				Host:   keystoneURL, Domain: tt.input.domain,
 				AdminUsername: adminUser, AdminPassword: adminPass,
+				Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
 			s := connector.Scopes{OfflineAccess: true, Groups: true}
 			identity, validPW, err := c.Login(context.Background(), s, tt.input.username, tt.input.password)
@@ -485,6 +488,7 @@ func TestUseRefreshToken(t *testing.T) {
 		client: http.DefaultClient,
 		Host:   keystoneURL, Domain: domainKeystone{ID: testDomainID},
 		AdminUsername: adminUser, AdminPassword: adminPass,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
@@ -511,6 +515,7 @@ func TestUseRefreshTokenUserDeleted(t *testing.T) {
 		client: http.DefaultClient,
 		Host:   keystoneURL, Domain: domainKeystone{ID: testDomainID},
 		AdminUsername: adminUser, AdminPassword: adminPass,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
@@ -542,6 +547,7 @@ func TestUseRefreshTokenGroupsChanged(t *testing.T) {
 		client: http.DefaultClient,
 		Host:   keystoneURL, Domain: domainKeystone{ID: testDomainID},
 		AdminUsername: adminUser, AdminPassword: adminPass,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
@@ -579,6 +585,7 @@ func TestNoGroupsInScope(t *testing.T) {
 		client: http.DefaultClient,
 		Host:   keystoneURL, Domain: domainKeystone{ID: testDomainID},
 		AdminUsername: adminUser, AdminPassword: adminPass,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: false}
 
