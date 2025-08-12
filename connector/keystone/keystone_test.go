@@ -646,14 +646,71 @@ func expectEquals(t *testing.T, a interface{}, b interface{}) {
 
 func newNoopLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-func TestGetHostname(t *testing.T) {
-	c := &conn{Host: "https://customer1.example.com:5000", Logger: newNoopLogger()}
-	got, err := c.getHostname()
+func TestAuthenticate_TokenMode(t *testing.T) {
+	// Test Login with token mode (username="_TOKEN_")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v3/auth/tokens" {
+			_ = json.NewEncoder(w).Encode(tokenResponse{Token: tokenInfo{User: userKeystone{ID: "u1", Name: "tokenuser"}}})
+		} else if strings.HasPrefix(r.URL.Path, "/v3/users/") {
+			_ = json.NewEncoder(w).Encode(userResponse{User: struct {
+				Name  string `json:"name"`
+				Email string `json:"email"`
+				ID    string `json:"id"`
+			}{Name: "tokenuser", Email: "tokenuser@example.com", ID: "u1"}})
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	c := &conn{Host: ts.URL, client: ts.Client(), Logger: newNoopLogger()}
+
+	// Test token mode login
+	identity, valid, err := c.Login(context.Background(), connector.Scopes{}, "_TOKEN_", "some-token")
 	if err != nil {
-		t.Fatalf("getHostname error: %v", err)
+		t.Fatalf("Login with token failed: %v", err)
 	}
-	if got != "customer1" {
-		t.Fatalf("want customer1, got %s", got)
+	if !valid {
+		t.Error("Expected token login to be valid")
+	}
+	if identity.Username != "tokenuser" {
+		t.Errorf("Expected username tokenuser, got %s", identity.Username)
+	}
+	if identity.Email != "tokenuser@example.com" {
+		t.Errorf("Expected email tokenuser@example.com, got %s", identity.Email)
+	}
+	if !identity.EmailVerified {
+		t.Error("Expected email to be verified")
+	}
+}
+
+func TestGetHostname(t *testing.T) {
+	tests := []struct {
+		name     string
+		host     string
+		expected string
+		wantErr  bool
+	}{
+		{"standard https", "https://customer1.example.com:5000", "customer1", false},
+		{"http with port", "http://test-host.domain.com:8080", "test-host", false},
+		{"no port", "https://myhost.example.org", "myhost", false},
+		{"ip address", "http://192.168.1.100:5000", "192", false},
+		{"localhost", "http://localhost:5000", "localhost", false},
+		{"invalid url", "://invalid-url", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &conn{Host: tt.host, Logger: newNoopLogger()}
+			got, err := c.getHostname()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getHostname() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.expected {
+				t.Errorf("getHostname() = %v, want %v", got, tt.expected)
+			}
+		})
 	}
 }
 
@@ -670,6 +727,15 @@ func TestGenerateGroupName(t *testing.T) {
 	if name2 != "cust-default-domain-my-project-admin" {
 		t.Fatalf("admin name unexpected: %s", name2)
 	}
+
+	// Test edge cases
+	projSpecial := project{ID: "p2", Name: "Special_Project_Name"}
+	roleSpecial := role{ID: "r3", Name: "custom_role"}
+	name3 := c.generateGroupName(projSpecial, roleSpecial, "customer-name")
+	expected := "customer-name-default-domain-special-project-name-custom_role"
+	if name3 != expected {
+		t.Fatalf("special name unexpected: got %s, want %s", name3, expected)
+	}
 }
 
 func TestPruneDuplicates(t *testing.T) {
@@ -679,29 +745,46 @@ func TestPruneDuplicates(t *testing.T) {
 }
 
 func TestFindGroupByID(t *testing.T) {
-	groups := []keystoneGroup{{ID: "1", Name: "g1"}, {ID: "2", Name: "g2"}}
+	groups := []keystoneGroup{{ID: "1", Name: "g1"}, {ID: "2", Name: "g2"}, {ID: "3", Name: ""}}
+	
+	// Test finding existing group
 	g, ok := findGroupByID(groups, "2")
 	if !ok || g.Name != "g2" {
 		t.Fatalf("expected to find g2, got %+v ok=%v", g, ok)
 	}
-	_, ok = findGroupByID(groups, "3")
+	
+	// Test finding group with empty name
+	g, ok = findGroupByID(groups, "3")
+	if !ok || g.ID != "3" {
+		t.Fatalf("expected to find group with ID 3, got %+v ok=%v", g, ok)
+	}
+	
+	// Test not finding non-existent group
+	_, ok = findGroupByID(groups, "999")
 	if ok {
-		t.Fatalf("did not expect to find id 3")
+		t.Fatalf("did not expect to find id 999")
+	}
+	
+	// Test empty groups slice
+	_, ok = findGroupByID([]keystoneGroup{}, "1")
+	if ok {
+		t.Fatalf("did not expect to find anything in empty slice")
 	}
 }
 
 func TestHTTPHelpers(t *testing.T) {
+	// Mock Keystone API endpoints used by helpers
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/groups":
-			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "Group1"}}})
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "Group1"}, {ID: "g2", Name: "Group2"}}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
 			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "Group1"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/roles":
-			_ = json.NewEncoder(w).Encode(struct{ Roles []role `json:"roles"` }{Roles: []role{{ID: "r1", Name: "admin"}}})
+			_ = json.NewEncoder(w).Encode(struct{ Roles []role `json:"roles"` }{Roles: []role{{ID: "r1", Name: "admin"}, {ID: "r2", Name: "_member_"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/projects":
-			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{{ID: "p1", Name: "Project1"}}})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/"):
+			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{{ID: "p1", Name: "Project1", DomainID: "default"}, {ID: "p2", Name: "Project2", DomainID: "default"}}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/") && !strings.HasSuffix(r.URL.Path, "/groups"):
 			_ = json.NewEncoder(w).Encode(userResponse{User: struct {
 				Name  string `json:"name"`
 				Email string `json:"email"`
@@ -709,11 +792,18 @@ func TestHTTPHelpers(t *testing.T) {
 			}{Name: "u1", Email: "u1@example.com", ID: "u1"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/auth/tokens":
 			_ = json.NewEncoder(w).Encode(tokenResponse{Token: tokenInfo{User: userKeystone{ID: "u1", Name: "u1"}}})
-		case r.Method == http.MethodGet && r.URL.Path == "/v3/role_assignments":
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "user.id="):
+			// User role assignments
 			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{{
 				Scope: projectScope{Project: identifierContainer{ID: "p1"}},
 				User:  identifierContainer{ID: "u1"},
 				Role:  identifierContainer{ID: "r1"},
+			}}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "group.id="):
+			// Group role assignments
+			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{{
+				Scope: projectScope{Project: identifierContainer{ID: "p2"}},
+				Role:  identifierContainer{ID: "r2"},
 			}}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -724,54 +814,252 @@ func TestHTTPHelpers(t *testing.T) {
 	c := &conn{Host: ts.URL, client: ts.Client(), Logger: newNoopLogger(), Domain: domainKeystone{Name: "Default"}}
 	ctx := context.Background()
 
+	// Test getAllGroups
 	groups, err := c.getAllGroups(ctx, "token")
-	if err != nil || len(groups) != 1 || groups[0].Name != "Group1" {
+	if err != nil || len(groups) != 2 || groups[0].Name != "Group1" {
 		t.Fatalf("getAllGroups unexpected: groups=%+v err=%v", groups, err)
 	}
 
+	// Test getUserGroups
 	ug, err := c.getUserGroups(ctx, "u1", "token")
 	if err != nil || len(ug) != 1 || ug[0].ID != "g1" {
 		t.Fatalf("getUserGroups unexpected: groups=%+v err=%v", ug, err)
 	}
 
+	// Test getRoles
 	roles, err := c.getRoles(ctx, "token")
-	if err != nil || len(roles) != 1 || roles[0].ID != "r1" {
+	if err != nil || len(roles) != 2 || roles[0].ID != "r1" {
 		t.Fatalf("getRoles unexpected: roles=%+v err=%v", roles, err)
 	}
 
+	// Test getProjects
 	projects, err := c.getProjects(ctx, "token")
-	if err != nil || len(projects) != 1 || projects[0].ID != "p1" {
+	if err != nil || len(projects) != 2 || projects[0].ID != "p1" {
 		t.Fatalf("getProjects unexpected: projects=%+v err=%v", projects, err)
 	}
 
+	// Test getUser
 	usr, err := c.getUser(ctx, "u1", "token")
 	if err != nil || usr == nil || usr.User.Email != "u1@example.com" {
 		t.Fatalf("getUser unexpected: user=%+v err=%v", usr, err)
 	}
 
+	// Test getTokenInfo
 	ti, err := c.getTokenInfo(ctx, "token")
 	if err != nil || ti == nil || ti.User.ID != "u1" {
 		t.Fatalf("getTokenInfo unexpected: ti=%+v err=%v", ti, err)
 	}
 
+	// Test getRoleAssignments for user
 	ras, err := c.getRoleAssignments(ctx, "token", getRoleAssignmentsOptions{userID: "u1"})
 	if err != nil || len(ras) != 1 || ras[0].Role.ID != "r1" {
-		t.Fatalf("getRoleAssignments unexpected: ras=%+v err=%v", ras, err)
+		t.Fatalf("getRoleAssignments for user unexpected: ras=%+v err=%v", ras, err)
+	}
+
+	// Test getRoleAssignments for group
+	gras, err := c.getRoleAssignments(ctx, "token", getRoleAssignmentsOptions{groupID: "g1"})
+	if err != nil || len(gras) != 1 || gras[0].Role.ID != "r2" {
+		t.Fatalf("getRoleAssignments for group unexpected: gras=%+v err=%v", gras, err)
 	}
 }
 
 func TestGetGroups_ComposesUserLocalAndRoleGroups(t *testing.T) {
+	// Mock comprehensive Keystone endpoints for getGroups testing
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/groups":
-			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "LocalG"}, {ID: "g2", Name: ""}}})
+			// Return all groups including one with empty name for ID resolution
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{
+				{ID: "g1", Name: "LocalGroup1"},
+				{ID: "g2", Name: "ResolvedGroup2"},
+				{ID: "g3", Name: "SSOGroup3"},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/roles":
+			_ = json.NewEncoder(w).Encode(struct{ Roles []role `json:"roles"` }{Roles: []role{
+				{ID: "r1", Name: "admin"},
+				{ID: "r2", Name: "_member_"},
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/projects":
+			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{
+				{ID: "p1", Name: "Project_One"},
+				{ID: "p2", Name: "Project_Two"},
+			}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
+			// Local groups for user including one with empty name
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{
+				{ID: "g1", Name: "LocalGroup1"},
+				{ID: "g2", Name: ""}, // Empty name, should be resolved via findGroupByID
+			}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "user.id="):
+			// User role assignments
+			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{
+				{
+					Scope: projectScope{Project: identifierContainer{ID: "p1"}},
+					User:  identifierContainer{ID: "u1"},
+					Role:  identifierContainer{ID: "r1"},
+				},
+			}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "group.id=g1"):
+			// Group role assignments for g1
+			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{
+				{
+					Scope: projectScope{Project: identifierContainer{ID: "p2"}},
+					Role:  identifierContainer{ID: "r2"},
+				},
+			}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "group.id=g2"):
+			// Group role assignments for g2
+			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "group.id=g3"):
+			// Group role assignments for g3 (SSO group)
+			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	c := &conn{
+		Host: ts.URL,
+		client: ts.Client(),
+		Logger: newNoopLogger(),
+		Domain: domainKeystone{Name: "Test_Domain"},
+		CustomerName: "testcust",
+	}
+	ctx := context.Background()
+
+	// Create tokenInfo with SSO federation groups (one named, one by ID only)
+	ti := &tokenInfo{User: userKeystone{
+		ID:   "u1",
+		Name: "testuser",
+		OSFederation: &struct {
+			Groups           []keystoneGroup `json:"groups"`
+			IdentityProvider struct{ ID string `json:"id"` } `json:"identity_provider"`
+			Protocol         struct{ ID string `json:"id"` } `json:"protocol"`
+		}{Groups: []keystoneGroup{
+			{ID: "g3", Name: "SSOGroup3"}, // Named SSO group
+			{ID: "g1", Name: ""},         // SSO group by ID only, should be resolved
+		}},
+	}}
+
+	groups, err := c.getGroups(ctx, "token", ti)
+	if err != nil {
+		t.Fatalf("getGroups error: %v", err)
+	}
+
+	// Expected groups:
+	// 1. SSO groups: "SSOGroup3", "LocalGroup1" (resolved from ID)
+	// 2. Local groups: "LocalGroup1", "ResolvedGroup2" (resolved from empty name)
+	// 3. Role-derived groups: "testcust-test-domain-project-one-admin", "testcust-test-domain-project-two-member"
+	expectedGroups := map[string]bool{
+		"SSOGroup3":     false, // From SSO federation
+		"LocalGroup1":   false, // From both SSO (resolved) and local groups
+		"ResolvedGroup2": false, // From local groups (resolved from empty name)
+		"testcust-test-domain-project-one-admin":   false, // From user role assignment
+		"testcust-test-domain-project-two-member":  false, // From group role assignment
+	}
+
+	for _, group := range groups {
+		if _, exists := expectedGroups[group]; exists {
+			expectedGroups[group] = true
+		}
+	}
+
+	// Verify all expected groups were found
+	for groupName, found := range expectedGroups {
+		if !found {
+			t.Errorf("Expected group %s not found in result: %v", groupName, groups)
+		}
+	}
+
+	// Verify no duplicates (LocalGroup1 appears in both SSO and local, should be deduped)
+	localGroup1Count := 0
+	for _, group := range groups {
+		if group == "LocalGroup1" {
+			localGroup1Count++
+		}
+	}
+	if localGroup1Count != 1 {
+		t.Errorf("Expected LocalGroup1 to appear exactly once (deduped), but found %d times", localGroup1Count)
+	}
+}
+
+func TestGetGroups_NoSSO_OnlyLocalAndRoles(t *testing.T) {
+	// Test getGroups for non-SSO user (no OSFederation)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/groups":
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "LocalGroup1"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/roles":
 			_ = json.NewEncoder(w).Encode(struct{ Roles []role `json:"roles"` }{Roles: []role{{ID: "r1", Name: "admin"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/projects":
-			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{{ID: "p1", Name: "Project1"}}})
+			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{{ID: "p1", Name: "TestProject"}}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
-			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "LocalG"}, {ID: "g2", Name: ""}}})
-		case r.Method == http.MethodGet && r.URL.Path == "/v3/role_assignments":
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "LocalGroup1"}}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "user.id="):
+			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{{
+				Scope: projectScope{Project: identifierContainer{ID: "p1"}},
+				User:  identifierContainer{ID: "u1"},
+				Role:  identifierContainer{ID: "r1"},
+			}}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "group.id="):
+			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	c := &conn{
+		Host: ts.URL,
+		client: ts.Client(),
+		Logger: newNoopLogger(),
+		Domain: domainKeystone{Name: "Default"},
+		CustomerName: "testcust",
+	}
+	ctx := context.Background()
+
+	// Non-SSO user (no OSFederation)
+	ti := &tokenInfo{User: userKeystone{ID: "u1", Name: "testuser", OSFederation: nil}}
+
+	groups, err := c.getGroups(ctx, "token", ti)
+	if err != nil {
+		t.Fatalf("getGroups error: %v", err)
+	}
+
+	// Expected: local group + role-derived group
+	expected := []string{"LocalGroup1", "testcust-default-testproject-admin"}
+	if len(groups) != len(expected) {
+		t.Fatalf("Expected %d groups, got %d: %v", len(expected), len(groups), groups)
+	}
+
+	for _, exp := range expected {
+		found := false
+		for _, actual := range groups {
+			if actual == exp {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected group %s not found in %v", exp, groups)
+		}
+	}
+}
+
+func TestGetGroups_CustomerNameFallback(t *testing.T) {
+	// Test getGroups when CustomerName is empty, should use getHostname()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/groups":
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/roles":
+			_ = json.NewEncoder(w).Encode(struct{ Roles []role `json:"roles"` }{Roles: []role{{ID: "r1", Name: "admin"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/projects":
+			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{{ID: "p1", Name: "TestProject"}}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{}})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "user.id="):
 			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{{
 				Scope: projectScope{Project: identifierContainer{ID: "p1"}},
 				User:  identifierContainer{ID: "u1"},
@@ -783,31 +1071,74 @@ func TestGetGroups_ComposesUserLocalAndRoleGroups(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c := &conn{Host: ts.URL, client: ts.Client(), Logger: newNoopLogger(), Domain: domainKeystone{Name: "Default"}, CustomerName: "cust"}
+	c := &conn{
+		Host: ts.URL, // Use the test server URL directly
+		client: ts.Client(),
+		Logger: newNoopLogger(),
+		Domain: domainKeystone{Name: "Default"},
+		CustomerName: "", // Empty, should fallback to getHostname()
+	}
 	ctx := context.Background()
 
-	ti := &tokenInfo{User: userKeystone{ID: "u1", Name: "u1", OSFederation: &struct {
-		Groups           []keystoneGroup `json:"groups"`
-		IdentityProvider struct{ ID string `json:"id"` } `json:"identity_provider"`
-		Protocol         struct{ ID string `json:"id"` } `json:"protocol"`
-	}{Groups: []keystoneGroup{{ID: "g1", Name: "LocalG"}, {ID: "g2", Name: ""}}}}}
+	ti := &tokenInfo{User: userKeystone{ID: "u1", Name: "testuser", OSFederation: nil}}
 
 	groups, err := c.getGroups(ctx, "token", ti)
 	if err != nil {
 		t.Fatalf("getGroups error: %v", err)
 	}
-	wantRole := "cust-default-project1-admin"
-	foundRole := false
-	foundLocal := false
-	for _, g := range groups {
-		if g == "LocalG" {
-			foundLocal = true
-		}
-		if g == wantRole {
-			foundRole = true
+
+	// Should use hostname from ts.URL (e.g., "127" from "127.0.0.1")
+	if len(groups) == 0 {
+		t.Fatal("Expected at least one role-derived group")
+	}
+
+	// Verify the group name contains the hostname prefix
+	found := false
+	for _, group := range groups {
+		if strings.Contains(group, "127") && strings.Contains(group, "default-testproject-admin") {
+			found = true
+			break
 		}
 	}
-	if !foundLocal || !foundRole {
-		t.Fatalf("expected LocalG and %s in groups, got %#v", wantRole, groups)
+	if !found {
+		t.Errorf("Expected group with hostname prefix, got: %v", groups)
+	}
+}
+
+func TestCheckIfUserExists(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/users/existing") {
+			_ = json.NewEncoder(w).Encode(userResponse{User: struct {
+				Name  string `json:"name"`
+				Email string `json:"email"`
+				ID    string `json:"id"`
+			}{Name: "existing", Email: "existing@example.com", ID: "existing"}})
+		} else if strings.HasSuffix(r.URL.Path, "/users/nonexistent") {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	c := &conn{Host: ts.URL, client: ts.Client(), Logger: newNoopLogger()}
+	ctx := context.Background()
+
+	// Test existing user
+	exists, err := c.checkIfUserExists(ctx, "existing", "token")
+	if err != nil {
+		t.Fatalf("checkIfUserExists error for existing user: %v", err)
+	}
+	if !exists {
+		t.Error("Expected existing user to exist")
+	}
+
+	// Test non-existent user
+	exists, err = c.checkIfUserExists(ctx, "nonexistent", "token")
+	if err != nil {
+		t.Fatalf("checkIfUserExists error for non-existent user: %v", err)
+	}
+	if exists {
+		t.Error("Expected non-existent user to not exist")
 	}
 }

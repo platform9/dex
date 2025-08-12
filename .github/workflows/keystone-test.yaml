@@ -1,0 +1,52 @@
+name: Keystone Tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'connector/keystone/**'
+
+permissions:
+  contents: read
+
+jobs:
+  keystone-test:
+    name: Keystone Connector Tests
+    runs-on: ubuntu-latest
+
+    services:
+      keystone:
+        image: openio/openstack-keystone:rocky
+        ports:
+          - 5000:5000
+          - 35357:35357
+        options: --health-cmd "curl --fail http://localhost:5000/v3" --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Wait for Keystone to be ready
+        run: |
+          timeout 60s bash -c 'until curl -f http://localhost:5000/v3; do sleep 2; done'
+
+      - name: Run Keystone unit tests
+        run: |
+          go test ./connector/keystone -v -run "Test(GetHostname|GenerateGroupName|PruneDuplicates|FindGroupByID|HTTPHelpers|GetGroups|CheckIfUserExists|Authenticate_TokenMode)"
+
+      - name: Run Keystone integration tests
+        run: |
+          go test ./connector/keystone -v
+        env:
+          DEX_KEYSTONE_URL: http://localhost:5000
+          DEX_KEYSTONE_ADMIN_URL: http://localhost:35357
+          DEX_KEYSTONE_ADMIN_USER: admin
+          DEX_KEYSTONE_ADMIN_PASS: admin
