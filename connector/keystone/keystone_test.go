@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"reflect"
@@ -309,8 +310,9 @@ func TestIncorrectCredentialsLogin(t *testing.T) {
 	setupVariables(t)
 	c := conn{
 		client: http.DefaultClient,
-		Host:   keystoneURL, Domain: domainKeystone{ID: testDomainID},
+		Host:   keystoneAdminURL, Domain: domainKeystone{ID: testDomainID},
 		AdminUsername: adminUser, AdminPassword: adminPass,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 	_, validPW, err := c.Login(context.Background(), s, adminUser, invalidPass)
@@ -445,8 +447,9 @@ func TestValidUserLogin(t *testing.T) {
 
 			c := conn{
 				client: http.DefaultClient,
-				Host:   keystoneURL, Domain: tt.input.domain,
+				Host:   keystoneAdminURL, Domain: tt.input.domain,
 				AdminUsername: adminUser, AdminPassword: adminPass,
+				Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
 			s := connector.Scopes{OfflineAccess: true, Groups: true}
 			identity, validPW, err := c.Login(context.Background(), s, tt.input.username, tt.input.password)
@@ -483,8 +486,9 @@ func TestUseRefreshToken(t *testing.T) {
 
 	c := conn{
 		client: http.DefaultClient,
-		Host:   keystoneURL, Domain: domainKeystone{ID: testDomainID},
+		Host:   keystoneAdminURL, Domain: domainKeystone{ID: testDomainID},
 		AdminUsername: adminUser, AdminPassword: adminPass,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
@@ -498,8 +502,17 @@ func TestUseRefreshToken(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 
-	expectEquals(t, 1, len(identityRefresh.Groups))
-	expectEquals(t, testGroup, identityRefresh.Groups[0])
+	// Custom connector may return additional role-derived groups; ensure our test group is present.
+	found := false
+	for _, g := range identityRefresh.Groups {
+		if g == testGroup {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected group %q to be present in %v", testGroup, identityRefresh.Groups)
+	}
 }
 
 func TestUseRefreshTokenUserDeleted(t *testing.T) {
@@ -509,8 +522,9 @@ func TestUseRefreshTokenUserDeleted(t *testing.T) {
 
 	c := conn{
 		client: http.DefaultClient,
-		Host:   keystoneURL, Domain: domainKeystone{ID: testDomainID},
+		Host:   keystoneAdminURL, Domain: domainKeystone{ID: testDomainID},
 		AdminUsername: adminUser, AdminPassword: adminPass,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
@@ -540,8 +554,9 @@ func TestUseRefreshTokenGroupsChanged(t *testing.T) {
 
 	c := conn{
 		client: http.DefaultClient,
-		Host:   keystoneURL, Domain: domainKeystone{ID: testDomainID},
+		Host:   keystoneAdminURL, Domain: domainKeystone{ID: testDomainID},
 		AdminUsername: adminUser, AdminPassword: adminPass,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: true}
 
@@ -555,7 +570,13 @@ func TestUseRefreshTokenGroupsChanged(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 
-	expectEquals(t, 0, len(identityRefresh.Groups))
+	// With custom connector, initial groups may not be empty due to role-derived groups.
+	// Assert that our test group is not present initially.
+	for _, g := range identityRefresh.Groups {
+		if g == testGroup {
+			t.Fatalf("did not expect group %q to be present initially: %v", testGroup, identityRefresh.Groups)
+		}
+	}
 
 	groupID := createGroup(t, token, "Test group", testGroup)
 	addUserToGroup(t, token, groupID, userID)
@@ -566,7 +587,17 @@ func TestUseRefreshTokenGroupsChanged(t *testing.T) {
 		t.Fatal(err.Error())
 	}
 
-	expectEquals(t, 1, len(identityRefresh.Groups))
+	// Ensure our test group is present after adding it.
+	found := false
+	for _, g := range identityRefresh.Groups {
+		if g == testGroup {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected group %q to be present after change in %v", testGroup, identityRefresh.Groups)
+	}
 }
 
 func TestNoGroupsInScope(t *testing.T) {
@@ -577,8 +608,9 @@ func TestNoGroupsInScope(t *testing.T) {
 
 	c := conn{
 		client: http.DefaultClient,
-		Host:   keystoneURL, Domain: domainKeystone{ID: testDomainID},
+		Host:   keystoneAdminURL, Domain: domainKeystone{ID: testDomainID},
 		AdminUsername: adminUser, AdminPassword: adminPass,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	s := connector.Scopes{OfflineAccess: true, Groups: false}
 

@@ -314,7 +314,6 @@ func (p *conn) authenticate(ctx context.Context, username, pass string) (string,
 	req = req.WithContext(ctx)
 
 	resp, err := p.client.Do(req)
-
 	if err != nil {
 		return "", nil, fmt.Errorf("keystone: error %v", err)
 	}
@@ -340,7 +339,7 @@ func (p *conn) authenticate(ctx context.Context, username, pass string) (string,
 
 func (p *conn) getAdminTokenUnscoped(ctx context.Context) (string, error) {
 	domain := domainKeystone{
-		Name: "default",
+		Name: "Default",
 	}
 	jsonData := loginRequestData{
 		auth: auth{
@@ -370,7 +369,6 @@ func (p *conn) getAdminTokenUnscoped(ctx context.Context) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 	resp, err := p.client.Do(req)
-
 	if err != nil {
 		return "", fmt.Errorf("keystone: error %v", err)
 	}
