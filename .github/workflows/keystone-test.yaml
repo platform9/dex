@@ -1,6 +1,7 @@
 name: Keystone Tests
 
 on:
+  workflow_call:  # Allow this workflow to be called by other workflows
   workflow_dispatch:
   push:
     paths:
