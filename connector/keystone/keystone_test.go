@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
@@ -640,5 +641,173 @@ func setupVariables(t *testing.T) {
 func expectEquals(t *testing.T, a interface{}, b interface{}) {
 	if !reflect.DeepEqual(a, b) {
 		t.Errorf("Expected %v to be equal %v", a, b)
+	}
+}
+
+func newNoopLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+func TestGetHostname(t *testing.T) {
+	c := &conn{Host: "https://customer1.example.com:5000", Logger: newNoopLogger()}
+	got, err := c.getHostname()
+	if err != nil {
+		t.Fatalf("getHostname error: %v", err)
+	}
+	if got != "customer1" {
+		t.Fatalf("want customer1, got %s", got)
+	}
+}
+
+func TestGenerateGroupName(t *testing.T) {
+	c := &conn{Domain: domainKeystone{Name: "Default_Domain"}, Logger: newNoopLogger()}
+	proj := project{ID: "p1", Name: "My_Project"}
+	roleMember := role{ID: "r1", Name: "_member_"}
+	roleAdmin := role{ID: "r2", Name: "admin"}
+	name1 := c.generateGroupName(proj, roleMember, "cust")
+	name2 := c.generateGroupName(proj, roleAdmin, "cust")
+	if name1 != "cust-default-domain-my-project-member" {
+		t.Fatalf("member name unexpected: %s", name1)
+	}
+	if name2 != "cust-default-domain-my-project-admin" {
+		t.Fatalf("admin name unexpected: %s", name2)
+	}
+}
+
+func TestPruneDuplicates(t *testing.T) {
+	in := []string{"a", "b", "a", "c", "b"}
+	out := pruneDuplicates(in)
+	expectEquals(t, []string{"a", "b", "c"}, out)
+}
+
+func TestFindGroupByID(t *testing.T) {
+	groups := []keystoneGroup{{ID: "1", Name: "g1"}, {ID: "2", Name: "g2"}}
+	g, ok := findGroupByID(groups, "2")
+	if !ok || g.Name != "g2" {
+		t.Fatalf("expected to find g2, got %+v ok=%v", g, ok)
+	}
+	_, ok = findGroupByID(groups, "3")
+	if ok {
+		t.Fatalf("did not expect to find id 3")
+	}
+}
+
+func TestHTTPHelpers(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/groups":
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "Group1"}}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "Group1"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/roles":
+			_ = json.NewEncoder(w).Encode(struct{ Roles []role `json:"roles"` }{Roles: []role{{ID: "r1", Name: "admin"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/projects":
+			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{{ID: "p1", Name: "Project1"}}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/"):
+			_ = json.NewEncoder(w).Encode(userResponse{User: struct {
+				Name  string `json:"name"`
+				Email string `json:"email"`
+				ID    string `json:"id"`
+			}{Name: "u1", Email: "u1@example.com", ID: "u1"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/auth/tokens":
+			_ = json.NewEncoder(w).Encode(tokenResponse{Token: tokenInfo{User: userKeystone{ID: "u1", Name: "u1"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/role_assignments":
+			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{{
+				Scope: projectScope{Project: identifierContainer{ID: "p1"}},
+				User:  identifierContainer{ID: "u1"},
+				Role:  identifierContainer{ID: "r1"},
+			}}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	c := &conn{Host: ts.URL, client: ts.Client(), Logger: newNoopLogger(), Domain: domainKeystone{Name: "Default"}}
+	ctx := context.Background()
+
+	groups, err := c.getAllGroups(ctx, "token")
+	if err != nil || len(groups) != 1 || groups[0].Name != "Group1" {
+		t.Fatalf("getAllGroups unexpected: groups=%+v err=%v", groups, err)
+	}
+
+	ug, err := c.getUserGroups(ctx, "u1", "token")
+	if err != nil || len(ug) != 1 || ug[0].ID != "g1" {
+		t.Fatalf("getUserGroups unexpected: groups=%+v err=%v", ug, err)
+	}
+
+	roles, err := c.getRoles(ctx, "token")
+	if err != nil || len(roles) != 1 || roles[0].ID != "r1" {
+		t.Fatalf("getRoles unexpected: roles=%+v err=%v", roles, err)
+	}
+
+	projects, err := c.getProjects(ctx, "token")
+	if err != nil || len(projects) != 1 || projects[0].ID != "p1" {
+		t.Fatalf("getProjects unexpected: projects=%+v err=%v", projects, err)
+	}
+
+	usr, err := c.getUser(ctx, "u1", "token")
+	if err != nil || usr == nil || usr.User.Email != "u1@example.com" {
+		t.Fatalf("getUser unexpected: user=%+v err=%v", usr, err)
+	}
+
+	ti, err := c.getTokenInfo(ctx, "token")
+	if err != nil || ti == nil || ti.User.ID != "u1" {
+		t.Fatalf("getTokenInfo unexpected: ti=%+v err=%v", ti, err)
+	}
+
+	ras, err := c.getRoleAssignments(ctx, "token", getRoleAssignmentsOptions{userID: "u1"})
+	if err != nil || len(ras) != 1 || ras[0].Role.ID != "r1" {
+		t.Fatalf("getRoleAssignments unexpected: ras=%+v err=%v", ras, err)
+	}
+}
+
+func TestGetGroups_ComposesUserLocalAndRoleGroups(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/groups":
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "LocalG"}, {ID: "g2", Name: ""}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/roles":
+			_ = json.NewEncoder(w).Encode(struct{ Roles []role `json:"roles"` }{Roles: []role{{ID: "r1", Name: "admin"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/projects":
+			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{{ID: "p1", Name: "Project1"}}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "LocalG"}, {ID: "g2", Name: ""}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v3/role_assignments":
+			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{{
+				Scope: projectScope{Project: identifierContainer{ID: "p1"}},
+				User:  identifierContainer{ID: "u1"},
+				Role:  identifierContainer{ID: "r1"},
+			}}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	c := &conn{Host: ts.URL, client: ts.Client(), Logger: newNoopLogger(), Domain: domainKeystone{Name: "Default"}, CustomerName: "cust"}
+	ctx := context.Background()
+
+	ti := &tokenInfo{User: userKeystone{ID: "u1", Name: "u1", OSFederation: &struct {
+		Groups           []keystoneGroup `json:"groups"`
+		IdentityProvider struct{ ID string `json:"id"` } `json:"identity_provider"`
+		Protocol         struct{ ID string `json:"id"` } `json:"protocol"`
+	}{Groups: []keystoneGroup{{ID: "g1", Name: "LocalG"}, {ID: "g2", Name: ""}}}}}
+
+	groups, err := c.getGroups(ctx, "token", ti)
+	if err != nil {
+		t.Fatalf("getGroups error: %v", err)
+	}
+	wantRole := "cust-default-project1-admin"
+	foundRole := false
+	foundLocal := false
+	for _, g := range groups {
+		if g == "LocalG" {
+			foundLocal = true
+		}
+		if g == wantRole {
+			foundRole = true
+		}
+	}
+	if !foundLocal || !foundRole {
+		t.Fatalf("expected LocalG and %s in groups, got %#v", wantRole, groups)
 	}
 }
