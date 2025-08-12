@@ -25,7 +25,7 @@ const (
 	testGroup         = "test_group"
 	testDomainAltName = "altdomain"
 	testDomainID      = "default"
-	testDomainName    = "Default"
+	testDomainName    = "default"
 )
 
 var (
@@ -71,7 +71,7 @@ func getAdminToken(t *testing.T, adminName, adminPass string) (token, id string)
 				Password: password{
 					User: user{
 						Name:     adminName,
-						Domain:   domainKeystone{ID: testDomainID},
+						Domain:   domainKeystone{Name: testDomainName},
 						Password: adminPass,
 					},
 				},
@@ -311,7 +311,7 @@ func TestIncorrectCredentialsLogin(t *testing.T) {
 	setupVariables(t)
 	c := conn{
 		client: http.DefaultClient,
-		Host:   keystoneURL, Domain: domainKeystone{ID: testDomainID},
+		Host:   keystoneURL, Domain: domainKeystone{Name: testDomainName},
 		AdminUsername: adminUser, AdminPassword: adminPass,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -358,7 +358,7 @@ func TestValidUserLogin(t *testing.T) {
 			name: "test with email address",
 			input: tUser{
 				createDomain: false,
-				domain:       domainKeystone{ID: testDomainID},
+				domain:       domainKeystone{Name: testDomainName},
 				username:     testUser,
 				email:        testEmail,
 				password:     testPass,
@@ -373,7 +373,7 @@ func TestValidUserLogin(t *testing.T) {
 			name: "test without email address",
 			input: tUser{
 				createDomain: false,
-				domain:       domainKeystone{ID: testDomainID},
+				domain:       domainKeystone{Name: testDomainName},
 				username:     testUser,
 				email:        "",
 				password:     testPass,
@@ -746,25 +746,25 @@ func TestPruneDuplicates(t *testing.T) {
 
 func TestFindGroupByID(t *testing.T) {
 	groups := []keystoneGroup{{ID: "1", Name: "g1"}, {ID: "2", Name: "g2"}, {ID: "3", Name: ""}}
-	
+
 	// Test finding existing group
 	g, ok := findGroupByID(groups, "2")
 	if !ok || g.Name != "g2" {
 		t.Fatalf("expected to find g2, got %+v ok=%v", g, ok)
 	}
-	
+
 	// Test finding group with empty name
 	g, ok = findGroupByID(groups, "3")
 	if !ok || g.ID != "3" {
 		t.Fatalf("expected to find group with ID 3, got %+v ok=%v", g, ok)
 	}
-	
+
 	// Test not finding non-existent group
 	_, ok = findGroupByID(groups, "999")
 	if ok {
 		t.Fatalf("did not expect to find id 999")
 	}
-	
+
 	// Test empty groups slice
 	_, ok = findGroupByID([]keystoneGroup{}, "1")
 	if ok {
@@ -781,9 +781,13 @@ func TestHTTPHelpers(t *testing.T) {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
 			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "Group1"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/roles":
-			_ = json.NewEncoder(w).Encode(struct{ Roles []role `json:"roles"` }{Roles: []role{{ID: "r1", Name: "admin"}, {ID: "r2", Name: "_member_"}}})
+			_ = json.NewEncoder(w).Encode(struct {
+				Roles []role `json:"roles"`
+			}{Roles: []role{{ID: "r1", Name: "admin"}, {ID: "r2", Name: "_member_"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/projects":
-			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{{ID: "p1", Name: "Project1", DomainID: "default"}, {ID: "p2", Name: "Project2", DomainID: "default"}}})
+			_ = json.NewEncoder(w).Encode(struct {
+				Projects []project `json:"projects"`
+			}{Projects: []project{{ID: "p1", Name: "Project1", DomainID: "default"}, {ID: "p2", Name: "Project2", DomainID: "default"}}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/") && !strings.HasSuffix(r.URL.Path, "/groups"):
 			_ = json.NewEncoder(w).Encode(userResponse{User: struct {
 				Name  string `json:"name"`
@@ -794,14 +798,18 @@ func TestHTTPHelpers(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(tokenResponse{Token: tokenInfo{User: userKeystone{ID: "u1", Name: "u1"}}})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "user.id="):
 			// User role assignments
-			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{{
+			_ = json.NewEncoder(w).Encode(struct {
+				RoleAssignments []roleAssignment `json:"role_assignments"`
+			}{RoleAssignments: []roleAssignment{{
 				Scope: projectScope{Project: identifierContainer{ID: "p1"}},
 				User:  identifierContainer{ID: "u1"},
 				Role:  identifierContainer{ID: "r1"},
 			}}})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "group.id="):
 			// Group role assignments
-			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{{
+			_ = json.NewEncoder(w).Encode(struct {
+				RoleAssignments []roleAssignment `json:"role_assignments"`
+			}{RoleAssignments: []roleAssignment{{
 				Scope: projectScope{Project: identifierContainer{ID: "p2"}},
 				Role:  identifierContainer{ID: "r2"},
 			}}})
@@ -875,12 +883,16 @@ func TestGetGroups_ComposesUserLocalAndRoleGroups(t *testing.T) {
 				{ID: "g3", Name: "SSOGroup3"},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/roles":
-			_ = json.NewEncoder(w).Encode(struct{ Roles []role `json:"roles"` }{Roles: []role{
+			_ = json.NewEncoder(w).Encode(struct {
+				Roles []role `json:"roles"`
+			}{Roles: []role{
 				{ID: "r1", Name: "admin"},
 				{ID: "r2", Name: "_member_"},
 			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/projects":
-			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{
+			_ = json.NewEncoder(w).Encode(struct {
+				Projects []project `json:"projects"`
+			}{Projects: []project{
 				{ID: "p1", Name: "Project_One"},
 				{ID: "p2", Name: "Project_Two"},
 			}})
@@ -892,7 +904,9 @@ func TestGetGroups_ComposesUserLocalAndRoleGroups(t *testing.T) {
 			}})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "user.id="):
 			// User role assignments
-			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{
+			_ = json.NewEncoder(w).Encode(struct {
+				RoleAssignments []roleAssignment `json:"role_assignments"`
+			}{RoleAssignments: []roleAssignment{
 				{
 					Scope: projectScope{Project: identifierContainer{ID: "p1"}},
 					User:  identifierContainer{ID: "u1"},
@@ -901,7 +915,9 @@ func TestGetGroups_ComposesUserLocalAndRoleGroups(t *testing.T) {
 			}})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "group.id=g1"):
 			// Group role assignments for g1
-			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{
+			_ = json.NewEncoder(w).Encode(struct {
+				RoleAssignments []roleAssignment `json:"role_assignments"`
+			}{RoleAssignments: []roleAssignment{
 				{
 					Scope: projectScope{Project: identifierContainer{ID: "p2"}},
 					Role:  identifierContainer{ID: "r2"},
@@ -909,10 +925,14 @@ func TestGetGroups_ComposesUserLocalAndRoleGroups(t *testing.T) {
 			}})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "group.id=g2"):
 			// Group role assignments for g2
-			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{}})
+			_ = json.NewEncoder(w).Encode(struct {
+				RoleAssignments []roleAssignment `json:"role_assignments"`
+			}{RoleAssignments: []roleAssignment{}})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "group.id=g3"):
 			// Group role assignments for g3 (SSO group)
-			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{}})
+			_ = json.NewEncoder(w).Encode(struct {
+				RoleAssignments []roleAssignment `json:"role_assignments"`
+			}{RoleAssignments: []roleAssignment{}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -920,10 +940,10 @@ func TestGetGroups_ComposesUserLocalAndRoleGroups(t *testing.T) {
 	defer ts.Close()
 
 	c := &conn{
-		Host: ts.URL,
-		client: ts.Client(),
-		Logger: newNoopLogger(),
-		Domain: domainKeystone{Name: "Test_Domain"},
+		Host:         ts.URL,
+		client:       ts.Client(),
+		Logger:       newNoopLogger(),
+		Domain:       domainKeystone{Name: "Test_Domain"},
 		CustomerName: "testcust",
 	}
 	ctx := context.Background()
@@ -934,11 +954,15 @@ func TestGetGroups_ComposesUserLocalAndRoleGroups(t *testing.T) {
 		Name: "testuser",
 		OSFederation: &struct {
 			Groups           []keystoneGroup `json:"groups"`
-			IdentityProvider struct{ ID string `json:"id"` } `json:"identity_provider"`
-			Protocol         struct{ ID string `json:"id"` } `json:"protocol"`
+			IdentityProvider struct {
+				ID string `json:"id"`
+			} `json:"identity_provider"`
+			Protocol struct {
+				ID string `json:"id"`
+			} `json:"protocol"`
 		}{Groups: []keystoneGroup{
 			{ID: "g3", Name: "SSOGroup3"}, // Named SSO group
-			{ID: "g1", Name: ""},         // SSO group by ID only, should be resolved
+			{ID: "g1", Name: ""},          // SSO group by ID only, should be resolved
 		}},
 	}}
 
@@ -952,11 +976,11 @@ func TestGetGroups_ComposesUserLocalAndRoleGroups(t *testing.T) {
 	// 2. Local groups: "LocalGroup1", "ResolvedGroup2" (resolved from empty name)
 	// 3. Role-derived groups: "testcust-test-domain-project-one-admin", "testcust-test-domain-project-two-member"
 	expectedGroups := map[string]bool{
-		"SSOGroup3":     false, // From SSO federation
-		"LocalGroup1":   false, // From both SSO (resolved) and local groups
-		"ResolvedGroup2": false, // From local groups (resolved from empty name)
-		"testcust-test-domain-project-one-admin":   false, // From user role assignment
-		"testcust-test-domain-project-two-member":  false, // From group role assignment
+		"SSOGroup3":                               false, // From SSO federation
+		"LocalGroup1":                             false, // From both SSO (resolved) and local groups
+		"ResolvedGroup2":                          false, // From local groups (resolved from empty name)
+		"testcust-test-domain-project-one-admin":  false, // From user role assignment
+		"testcust-test-domain-project-two-member": false, // From group role assignment
 	}
 
 	for _, group := range groups {
@@ -991,19 +1015,27 @@ func TestGetGroups_NoSSO_OnlyLocalAndRoles(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/groups":
 			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "LocalGroup1"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/roles":
-			_ = json.NewEncoder(w).Encode(struct{ Roles []role `json:"roles"` }{Roles: []role{{ID: "r1", Name: "admin"}}})
+			_ = json.NewEncoder(w).Encode(struct {
+				Roles []role `json:"roles"`
+			}{Roles: []role{{ID: "r1", Name: "admin"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/projects":
-			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{{ID: "p1", Name: "TestProject"}}})
+			_ = json.NewEncoder(w).Encode(struct {
+				Projects []project `json:"projects"`
+			}{Projects: []project{{ID: "p1", Name: "TestProject"}}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
 			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{{ID: "g1", Name: "LocalGroup1"}}})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "user.id="):
-			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{{
+			_ = json.NewEncoder(w).Encode(struct {
+				RoleAssignments []roleAssignment `json:"role_assignments"`
+			}{RoleAssignments: []roleAssignment{{
 				Scope: projectScope{Project: identifierContainer{ID: "p1"}},
 				User:  identifierContainer{ID: "u1"},
 				Role:  identifierContainer{ID: "r1"},
 			}}})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "group.id="):
-			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{}})
+			_ = json.NewEncoder(w).Encode(struct {
+				RoleAssignments []roleAssignment `json:"role_assignments"`
+			}{RoleAssignments: []roleAssignment{}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1011,10 +1043,10 @@ func TestGetGroups_NoSSO_OnlyLocalAndRoles(t *testing.T) {
 	defer ts.Close()
 
 	c := &conn{
-		Host: ts.URL,
-		client: ts.Client(),
-		Logger: newNoopLogger(),
-		Domain: domainKeystone{Name: "Default"},
+		Host:         ts.URL,
+		client:       ts.Client(),
+		Logger:       newNoopLogger(),
+		Domain:       domainKeystone{Name: "Default"},
 		CustomerName: "testcust",
 	}
 	ctx := context.Background()
@@ -1054,13 +1086,19 @@ func TestGetGroups_CustomerNameFallback(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/groups":
 			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/roles":
-			_ = json.NewEncoder(w).Encode(struct{ Roles []role `json:"roles"` }{Roles: []role{{ID: "r1", Name: "admin"}}})
+			_ = json.NewEncoder(w).Encode(struct {
+				Roles []role `json:"roles"`
+			}{Roles: []role{{ID: "r1", Name: "admin"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v3/projects":
-			_ = json.NewEncoder(w).Encode(struct{ Projects []project `json:"projects"` }{Projects: []project{{ID: "p1", Name: "TestProject"}}})
+			_ = json.NewEncoder(w).Encode(struct {
+				Projects []project `json:"projects"`
+			}{Projects: []project{{ID: "p1", Name: "TestProject"}}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
 			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: []keystoneGroup{}})
 		case r.Method == http.MethodGet && strings.Contains(r.URL.RawQuery, "user.id="):
-			_ = json.NewEncoder(w).Encode(struct{ RoleAssignments []roleAssignment `json:"role_assignments"` }{RoleAssignments: []roleAssignment{{
+			_ = json.NewEncoder(w).Encode(struct {
+				RoleAssignments []roleAssignment `json:"role_assignments"`
+			}{RoleAssignments: []roleAssignment{{
 				Scope: projectScope{Project: identifierContainer{ID: "p1"}},
 				User:  identifierContainer{ID: "u1"},
 				Role:  identifierContainer{ID: "r1"},
@@ -1072,10 +1110,10 @@ func TestGetGroups_CustomerNameFallback(t *testing.T) {
 	defer ts.Close()
 
 	c := &conn{
-		Host: ts.URL, // Use the test server URL directly
-		client: ts.Client(),
-		Logger: newNoopLogger(),
-		Domain: domainKeystone{Name: "Default"},
+		Host:         ts.URL, // Use the test server URL directly
+		client:       ts.Client(),
+		Logger:       newNoopLogger(),
+		Domain:       domainKeystone{Name: "Default"},
 		CustomerName: "", // Empty, should fallback to getHostname()
 	}
 	ctx := context.Background()

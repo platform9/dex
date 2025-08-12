@@ -44,10 +44,10 @@ jobs:
           go test ./connector/keystone -v -run "Test(GetHostname|GenerateGroupName|PruneDuplicates|FindGroupByID|HTTPHelpers|GetGroups|CheckIfUserExists|Authenticate_TokenMode)"
 
       - name: Run Keystone integration tests
-        run: |
-          go test ./connector/keystone -v
         env:
           DEX_KEYSTONE_URL: http://localhost:5000
           DEX_KEYSTONE_ADMIN_URL: http://localhost:35357
-          DEX_KEYSTONE_ADMIN_USER: admin
-          DEX_KEYSTONE_ADMIN_PASS: admin
+          DEX_KEYSTONE_ADMIN_USER: demo
+          DEX_KEYSTONE_ADMIN_PASS: DEMO_PASS
+        run: |
+          go test ./connector/keystone -v
