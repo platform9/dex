@@ -251,7 +251,6 @@ func getAdminTokenUnscoped(ctx context.Context, client *http.Client, baseURL, ad
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 	resp, err := client.Do(req)
-
 	if err != nil {
 		return "", fmt.Errorf("keystone: error %v", err)
 	}
@@ -479,8 +478,8 @@ func getUser(ctx context.Context, client *http.Client, baseURL, userID, token st
 
 // getAllGroupsForUser returns all groups for a user (local groups + SSO groups + role groups)
 func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, token, customerName, domainID string, tokenInfo *tokenInfo, logger *slog.Logger) ([]string, error) {
-	var userGroups []string
-	var userGroupIDs []string
+	var userGroups []string   //nolint:prealloc
+	var userGroupIDs []string //nolint:prealloc
 
 	allGroups, err := getAllKeystoneGroups(ctx, client, baseURL, token)
 	if err != nil {
@@ -573,7 +572,7 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 	}
 
 	// 3. Now create groups based on the role assignments
-	var roleGroups []string
+	roleGroups := make([]string, 0, len(roleAssignments))
 
 	// get the customer name to be prefixed in the group name
 	// if customerName is not provided in the keystone config get it from keystone host url.
@@ -638,8 +637,8 @@ func getTokenInfo(ctx context.Context, client *http.Client, baseURL, token strin
 }
 
 func pruneDuplicates(ss []string) []string {
-	set := map[string]struct{}{}
-	var ns []string
+	set := make(map[string]struct{}, len(ss))
+	ns := make([]string, 0, len(ss))
 	for _, s := range ss {
 		if _, ok := set[s]; ok {
 			continue
@@ -672,8 +671,8 @@ func findGroupByID(groups []keystoneGroup, groupID string) (group keystoneGroup,
 
 // getHostname returns the hostname from the base URL
 func getHostname(baseURL string) (string, error) {
-	keystoneUrl := baseURL
-	parsedURL, err := url.Parse(keystoneUrl)
+	keystoneURL := baseURL
+	parsedURL, err := url.Parse(keystoneURL)
 	if err != nil {
 		return "", err
 	}
