@@ -339,7 +339,7 @@ func (p *conn) authenticate(ctx context.Context, username, pass string) (string,
 
 func (p *conn) getAdminTokenUnscoped(ctx context.Context) (string, error) {
 	domain := domainKeystone{
-		Name: "default",
+		Name: "Default",
 	}
 	jsonData := loginRequestData{
 		auth: auth{
