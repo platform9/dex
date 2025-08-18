@@ -31,10 +31,6 @@ var (
 	_ connector.RefreshConnector  = &conn{}
 )
 
-const (
-	keystoneAuthTokenPath = "/keystone/v3/auth/tokens"
-)
-
 // Open returns an authentication strategy using Keystone.
 func (c *Config) Open(id string, logger *slog.Logger) (connector.Connector, error) {
 	domain := domainKeystone{
@@ -62,10 +58,9 @@ func (p *conn) Close() error { return nil }
 func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, password string) (identity connector.Identity, validPassword bool, err error) {
 	var token string
 	var tokenInfo *tokenInfo
-	baseURL := normalizeKeystoneURL(p.Host)
 	if username == "" || username == "_TOKEN_" {
 		token = password
-		tokenInfo, err = getTokenInfo(ctx, p.client, baseURL, token, p.Logger)
+		tokenInfo, err = getTokenInfo(ctx, p.client, p.Host, token, p.Logger)
 		if err != nil {
 			return connector.Identity{}, false, err
 		}
@@ -78,12 +73,12 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 	if scopes.Groups {
 		p.Logger.Info("groups scope requested, fetching groups")
 		var err error
-		adminToken, err := getAdminTokenUnscoped(ctx, p.client, baseURL, p.AdminUsername, p.AdminPassword)
+		adminToken, err := getAdminTokenUnscoped(ctx, p.client, p.Host, p.AdminUsername, p.AdminPassword)
 		if err != nil {
 			p.Logger.Error("failed to obtain admin token", "error", err)
 			return identity, false, err
 		}
-		identity.Groups, err = getAllGroupsForUser(ctx, p.client, baseURL, adminToken, p.CustomerName, p.Domain.ID, tokenInfo, p.Logger)
+		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, adminToken, p.CustomerName, p.Domain.ID, tokenInfo, p.Logger)
 		if err != nil {
 			return connector.Identity{}, false, err
 		}
@@ -91,7 +86,7 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 	identity.Username = tokenInfo.User.Name
 	identity.UserID = tokenInfo.User.ID
 
-	user, err := getUser(ctx, p.client, baseURL, tokenInfo.User.ID, token)
+	user, err := getUser(ctx, p.client, p.Host, tokenInfo.User.ID, token)
 	if err != nil {
 		return identity, false, err
 	}
@@ -116,8 +111,7 @@ func (p *conn) Prompt() string { return "username" }
 func (p *conn) Refresh(
 	ctx context.Context, scopes connector.Scopes, identity connector.Identity,
 ) (connector.Identity, error) {
-	baseURL := normalizeKeystoneURL(p.Host)
-	token, err := getAdminTokenUnscoped(ctx, p.client, baseURL, p.AdminUsername, p.AdminPassword)
+	token, err := getAdminTokenUnscoped(ctx, p.client, p.Host, p.AdminUsername, p.AdminPassword)
 	if err != nil {
 		p.Logger.Error("failed to obtain admin token", "error", err)
 		return identity, err
@@ -146,7 +140,7 @@ func (p *conn) Refresh(
 	// If there is a token associated with this refresh token, use that to look up
 	// the token info. This can contain things like SSO groups which are not present elsewhere.
 	if len(data.Token) > 0 {
-		tokenInfo, err = getTokenInfo(ctx, p.client, baseURL, data.Token, p.Logger)
+		tokenInfo, err = getTokenInfo(ctx, p.client, p.Host, data.Token, p.Logger)
 		if err != nil {
 			return identity, err
 		}
@@ -154,7 +148,7 @@ func (p *conn) Refresh(
 
 	if scopes.Groups {
 		var err error
-		identity.Groups, err = getAllGroupsForUser(ctx, p.client, baseURL, token, p.CustomerName, p.Domain.ID, tokenInfo, p.Logger)
+		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, token, p.CustomerName, p.Domain.ID, tokenInfo, p.Logger)
 		if err != nil {
 			return identity, err
 		}
@@ -182,8 +176,12 @@ func (p *conn) authenticate(ctx context.Context, username, pass string) (string,
 		return "", nil, err
 	}
 
-	baseURL := normalizeKeystoneURL(p.Host)
-	authTokenURL := baseURL + keystoneAuthTokenPath
+	// Build auth token URL preserving any base path in p.Host (e.g., /keystone)
+	authTokenURL, err := url.JoinPath(p.Host, "v3", "auth", "tokens")
+	if err != nil {
+		return "", nil, err
+	}
+
 	req, err := http.NewRequest("POST", authTokenURL, bytes.NewBuffer(jsonValue))
 	if err != nil {
 		return "", nil, err
@@ -199,7 +197,7 @@ func (p *conn) authenticate(ctx context.Context, username, pass string) (string,
 	}
 	if resp.StatusCode/100 != 2 {
 		p.Logger.Error("keystone login failed", "statusCode", resp.StatusCode)
-		return "", nil, fmt.Errorf("keystone login: error %v", resp.StatusCode)
+		return "", nil, fmt.Errorf("keystone login: URL %s error %v", authTokenURL, resp.StatusCode)
 	}
 	if resp.StatusCode != 201 {
 		return "", nil, nil
@@ -242,7 +240,10 @@ func getAdminTokenUnscoped(ctx context.Context, client *http.Client, baseURL, ad
 		return "", err
 	}
 	// https://developer.openstack.org/api-ref/identity/v3/#password-authentication-with-unscoped-authorization
-	authTokenURL := baseURL + keystoneAuthTokenPath
+	authTokenURL, err := url.JoinPath(baseURL, "v3", "auth", "tokens")
+	if err != nil {
+		return "", err
+	}
 	req, err := http.NewRequest("POST", authTokenURL, bytes.NewBuffer(jsonValue))
 	if err != nil {
 		return "", err
@@ -264,21 +265,17 @@ func getAdminTokenUnscoped(ctx context.Context, client *http.Client, baseURL, ad
 }
 
 func (p *conn) checkIfUserExists(ctx context.Context, userID string, token string) (bool, error) {
-	baseURL := normalizeKeystoneURL(p.Host)
-	user, err := getUser(ctx, p.client, baseURL, userID, token)
+	user, err := getUser(ctx, p.client, p.Host, userID, token)
 	return user != nil, err
-}
-
-func normalizeKeystoneURL(baseURL string) string {
-	baseURL = strings.TrimSuffix(baseURL, "/")
-	baseURL = strings.TrimSuffix(baseURL, "/keystone")
-	return baseURL
 }
 
 // getAllKeystoneGroups returns all groups in keystone
 func getAllKeystoneGroups(ctx context.Context, client *http.Client, baseURL, token string) ([]keystoneGroup, error) {
 	// https://docs.openstack.org/api-ref/identity/v3/?expanded=list-groups-detail#list-groups
-	groupsURL := baseURL + "/keystone/v3/groups"
+	groupsURL, err := url.JoinPath(baseURL, "v3", "groups")
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequest(http.MethodGet, groupsURL, nil)
 	if err != nil {
 		return nil, err
@@ -308,7 +305,10 @@ func getAllKeystoneGroups(ctx context.Context, client *http.Client, baseURL, tok
 // getUserLocalGroups returns local groups for a user
 func getUserLocalGroups(ctx context.Context, client *http.Client, baseURL, userID, token string) ([]keystoneGroup, error) {
 	// https://developer.openstack.org/api-ref/identity/v3/#list-groups-to-which-a-user-belongs
-	groupsURL := baseURL + "/keystone/v3/users/" + userID + "/groups"
+	groupsURL, err := url.JoinPath(baseURL, "v3", "users", userID, "groups")
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequest("GET", groupsURL, nil)
 	if err != nil {
 		return nil, err
@@ -337,12 +337,14 @@ func getUserLocalGroups(ctx context.Context, client *http.Client, baseURL, userI
 
 // getRoleAssignments returns role assignments for a user or group
 func getRoleAssignments(ctx context.Context, client *http.Client, baseURL, token string, opts getRoleAssignmentsOptions, logger *slog.Logger) ([]roleAssignment, error) {
-	endpoint := fmt.Sprintf("%s/keystone/v3/role_assignments?", baseURL)
-	// note: group and user filters are mutually exclusive
+	endpoint, err := url.JoinPath(baseURL, "v3", "role_assignments")
+	if err != nil {
+		return nil, err
+	}
 	if len(opts.userID) > 0 {
-		endpoint = fmt.Sprintf("%seffective&user.id=%s", endpoint, opts.userID)
+		endpoint = fmt.Sprintf("%s?effective&user.id=%s", endpoint, opts.userID)
 	} else if len(opts.groupID) > 0 {
-		endpoint = fmt.Sprintf("%sgroup.id=%s", endpoint, opts.groupID)
+		endpoint = fmt.Sprintf("%s?group.id=%s", endpoint, opts.groupID)
 	}
 
 	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail#list-role-assignments
@@ -379,7 +381,11 @@ func getRoleAssignments(ctx context.Context, client *http.Client, baseURL, token
 // getRoles returns all roles in keystone
 func getRoles(ctx context.Context, client *http.Client, baseURL, token string, logger *slog.Logger) ([]role, error) {
 	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail,list-roles-detail#list-roles
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/keystone/v3/roles", baseURL), nil)
+	rolesURL, err := url.JoinPath(baseURL, "v3", "roles")
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, rolesURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +418,11 @@ func getRoles(ctx context.Context, client *http.Client, baseURL, token string, l
 // getProjects returns all projects in keystone
 func getProjects(ctx context.Context, client *http.Client, baseURL, token string, logger *slog.Logger) ([]project, error) {
 	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail,list-roles-detail#list-roles
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/keystone/v3/projects", baseURL), nil)
+	projectsURL, err := url.JoinPath(baseURL, "v3", "projects")
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, projectsURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -444,7 +454,10 @@ func getProjects(ctx context.Context, client *http.Client, baseURL, token string
 
 func getUser(ctx context.Context, client *http.Client, baseURL, userID, token string) (*userResponse, error) {
 	// https://developer.openstack.org/api-ref/identity/v3/#show-user-details
-	userURL := baseURL + "/keystone/v3/users/" + userID
+	userURL, err := url.JoinPath(baseURL, "v3", "users", userID)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequest("GET", userURL, nil)
 	if err != nil {
 		return nil, err
@@ -604,7 +617,10 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 
 func getTokenInfo(ctx context.Context, client *http.Client, baseURL, token string, logger *slog.Logger) (*tokenInfo, error) {
 	// https://developer.openstack.org/api-ref/identity/v3/#password-authentication-with-unscoped-authorization
-	authTokenURL := baseURL + keystoneAuthTokenPath
+	authTokenURL, err := url.JoinPath(baseURL, "v3", "auth", "tokens")
+	if err != nil {
+		return nil, err
+	}
 	logger.Debug("fetching keystone token info", "url", authTokenURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authTokenURL, nil)
 	if err != nil {

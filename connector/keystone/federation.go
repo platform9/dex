@@ -76,10 +76,12 @@ func NewFederationConnector(cfg FederationConfig, logger *slog.Logger) (*Federat
 }
 
 func (c *FederationConnector) LoginURL(scopes connector.Scopes, callbackURL, state string) (string, error) {
-	ksBase := normalizeKeystoneURL(c.cfg.Host)
-	ssoLoginPath := c.cfg.ShibbolethLoginPath
+	// remove trailing slash from c.cfg.Host
+	baseURL := strings.TrimSuffix(c.cfg.Host, "/")
+	// remove leading slash from c.cfg.ShibbolethLoginPath
+	ssoLoginPath := strings.TrimPrefix(c.cfg.ShibbolethLoginPath, "/")
 
-	u, err := url.Parse(fmt.Sprintf("%s%s", ksBase, ssoLoginPath))
+	u, err := url.Parse(fmt.Sprintf("%s/%s", baseURL, ssoLoginPath))
 	if err != nil {
 		return "", fmt.Errorf("parsing SSO login URL: %w", err)
 	}
@@ -108,21 +110,20 @@ func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Re
 	}
 	c.logger.Info("successfully obtained token from federation cookies")
 
-	ksBase := normalizeKeystoneURL(c.cfg.Host)
 	c.logger.Debug("retrieving user info")
-	tokenInfo, err = getTokenInfo(r.Context(), c.client, ksBase, ksToken, c.logger)
+	tokenInfo, err = getTokenInfo(r.Context(), c.client, c.cfg.Host, ksToken, c.logger)
 	if err != nil {
 		return connector.Identity{}, err
 	}
 	if scopes.Groups {
 		c.logger.Info("groups scope requested, fetching groups")
 		var err error
-		adminToken, err := getAdminTokenUnscoped(r.Context(), c.client, ksBase, c.cfg.AdminUsername, c.cfg.AdminPassword)
+		adminToken, err := getAdminTokenUnscoped(r.Context(), c.client, c.cfg.Host, c.cfg.AdminUsername, c.cfg.AdminPassword)
 		if err != nil {
 			c.logger.Error("failed to obtain admin token", "error", err)
 			return identity, err
 		}
-		identity.Groups, err = getAllGroupsForUser(r.Context(), c.client, ksBase, adminToken, c.cfg.CustomerName, c.cfg.Domain, tokenInfo, c.logger)
+		identity.Groups, err = getAllGroupsForUser(r.Context(), c.client, c.cfg.Host, adminToken, c.cfg.CustomerName, c.cfg.Domain, tokenInfo, c.logger)
 		if err != nil {
 			return connector.Identity{}, err
 		}
@@ -130,7 +131,7 @@ func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Re
 	identity.Username = tokenInfo.User.Name
 	identity.UserID = tokenInfo.User.ID
 
-	user, err := getUser(r.Context(), c.client, ksBase, tokenInfo.User.ID, ksToken)
+	user, err := getUser(r.Context(), c.client, c.cfg.Host, tokenInfo.User.ID, ksToken)
 	if err != nil {
 		return identity, err
 	}
@@ -155,9 +156,12 @@ func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Re
 // with Keystone's federation endpoint.
 func (c *FederationConnector) getKeystoneTokenFromFederation(r *http.Request) (string, error) {
 	c.logger.Debug("getting keystone token from federation cookies")
-	ksBase := normalizeKeystoneURL(c.cfg.Host)
+	// remove trailing slash from c.cfg.Host
+	baseURL := strings.TrimSuffix(c.cfg.Host, "/")
+	// remove leading slash from c.cfg.FederationAuthPath
+	federationAuthPath := strings.TrimPrefix(c.cfg.FederationAuthPath, "/")
 
-	federationAuthURL := fmt.Sprintf("%s%s", ksBase, c.cfg.FederationAuthPath)
+	federationAuthURL := fmt.Sprintf("%s/%s", baseURL, federationAuthPath)
 	c.logger.Info("requesting keystone token from federation auth endpoint")
 
 	req, err := http.NewRequest("GET", federationAuthURL, nil)
@@ -223,16 +227,15 @@ func (c *FederationConnector) Refresh(
 	ctx context.Context, scopes connector.Scopes, identity connector.Identity,
 ) (connector.Identity, error) {
 	c.logger.Info("refresh called", "userID", identity.UserID)
-	ksBase := normalizeKeystoneURL(c.cfg.Host)
 
-	adminToken, err := getAdminTokenUnscoped(ctx, c.client, ksBase, c.cfg.AdminUsername, c.cfg.AdminPassword)
+	adminToken, err := getAdminTokenUnscoped(ctx, c.client, c.cfg.Host, c.cfg.AdminUsername, c.cfg.AdminPassword)
 	if err != nil {
 		c.logger.Error("failed to obtain admin token for refresh", "error", err)
 		return identity, err
 	}
 
 	// Check if the user still exists
-	user, err := getUser(ctx, c.client, ksBase, identity.UserID, adminToken)
+	user, err := getUser(ctx, c.client, c.cfg.Host, identity.UserID, adminToken)
 	if err != nil {
 		c.logger.Error("failed to get user", "userID", identity.UserID, "error", err)
 		return identity, err
@@ -259,7 +262,7 @@ func (c *FederationConnector) Refresh(
 	// If we have a stored token, try to use it to get token info
 	if len(data.Token) > 0 {
 		c.logger.Debug("using stored token to get token info")
-		tokenInfoFromStored, err := getTokenInfo(ctx, c.client, ksBase, data.Token, c.logger)
+		tokenInfoFromStored, err := getTokenInfo(ctx, c.client, c.cfg.Host, data.Token, c.logger)
 		if err == nil {
 			// Only use the stored token info if we could retrieve it successfully
 			tokenInfo = tokenInfoFromStored
@@ -272,7 +275,7 @@ func (c *FederationConnector) Refresh(
 	if scopes.Groups {
 		c.logger.Info("refreshing groups", "userID", identity.UserID)
 		var err error
-		identity.Groups, err = getAllGroupsForUser(ctx, c.client, ksBase, adminToken, c.cfg.CustomerName, c.cfg.Domain, tokenInfo, c.logger)
+		identity.Groups, err = getAllGroupsForUser(ctx, c.client, c.cfg.Host, adminToken, c.cfg.CustomerName, c.cfg.Domain, tokenInfo, c.logger)
 		if err != nil {
 			c.logger.Error("failed to get groups", "userID", identity.UserID, "error", err)
 			return identity, err
