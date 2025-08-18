@@ -83,8 +83,8 @@ func TestFederation_LoginURL(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse result: %v", err)
 			}
-			// Expect path to be base + shib path (normalized with single slash)
-			if got, want := parsed.Path, "/keystone/shib/login"; got != want {
+			// Expect path to be shib path at the root (host may have had trailing /keystone stripped)
+			if got, want := parsed.Path, "/shib/login"; got != want {
 				t.Fatalf("unexpected path: got %q want %q", got, want)
 			}
 			// target query must include callback and state

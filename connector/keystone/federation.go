@@ -76,9 +76,8 @@ func NewFederationConnector(cfg FederationConfig, logger *slog.Logger) (*Federat
 }
 
 func (c *FederationConnector) LoginURL(scopes connector.Scopes, callbackURL, state string) (string, error) {
-	// remove trailing slash from c.cfg.Host
 	baseURL := strings.TrimSuffix(c.cfg.Host, "/")
-	// remove leading slash from c.cfg.ShibbolethLoginPath
+	baseURL = strings.TrimSuffix(baseURL, "/keystone")
 	ssoLoginPath := strings.TrimPrefix(c.cfg.ShibbolethLoginPath, "/")
 
 	u, err := url.Parse(fmt.Sprintf("%s/%s", baseURL, ssoLoginPath))
