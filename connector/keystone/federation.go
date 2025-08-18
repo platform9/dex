@@ -169,19 +169,23 @@ func (c *FederationConnector) getKeystoneTokenFromFederation(r *http.Request) (s
 		return "", err
 	}
 
-	shibbolethCookiePrefixes := []string{
-		"_shibsession",
-		"_shibstate",
-	}
+	// shibbolethCookiePrefixes := []string{
+	// 	"_shibsession",
+	// 	"_shibstate",
+	// }
 
+	// for _, cookie := range r.Cookies() {
+	// 	cookieName := strings.ToLower(cookie.Name)
+	// 	for _, prefix := range shibbolethCookiePrefixes {
+	// 		if strings.HasPrefix(cookieName, prefix) {
+	// 			req.AddCookie(cookie)
+	// 			break
+	// 		}
+	// 	}
+	// }
 	for _, cookie := range r.Cookies() {
-		cookieName := strings.ToLower(cookie.Name)
-		for _, prefix := range shibbolethCookiePrefixes {
-			if strings.HasPrefix(cookieName, prefix) {
-				req.AddCookie(cookie)
-				break
-			}
-		}
+		c.logger.Debug("adding cookie to federation auth request", "cookie", cookie.Name)
+		req.AddCookie(cookie)
 	}
 
 	if userAgent := r.Header.Get("User-Agent"); userAgent != "" {
