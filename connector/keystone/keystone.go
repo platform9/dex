@@ -78,7 +78,7 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 			p.Logger.Error("failed to obtain admin token", "error", err)
 			return identity, false, err
 		}
-		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, adminToken, p.CustomerName, p.Domain.ID, tokenInfo, p.Logger)
+		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, adminToken, p.CustomerName, p.Domain.Name, tokenInfo, p.Logger)
 		if err != nil {
 			return connector.Identity{}, false, err
 		}
@@ -148,7 +148,7 @@ func (p *conn) Refresh(
 
 	if scopes.Groups {
 		var err error
-		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, token, p.CustomerName, p.Domain.ID, tokenInfo, p.Logger)
+		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, token, p.CustomerName, p.Domain.Name, tokenInfo, p.Logger)
 		if err != nil {
 			return identity, err
 		}
