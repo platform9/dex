@@ -104,6 +104,23 @@
   width: 100%;
 }
 
+.password-field-wrapper {
+  position: relative; 
+  display: inline-block; 
+  width: 100%;
+}
+
+.toggle-password-button {
+  position: absolute; 
+  right: 10px; 
+  top: 50%; 
+  transform: translateY(-50%); 
+  background: transparent; 
+  border: 0; 
+  cursor: pointer; 
+  color: inherit;
+}
+
 .theme-form-input:focus,
 .theme-form-input:active {
   border-color: #CDD0D4;
@@ -131,4 +148,38 @@
   font-weight: 600;
   margin-top: 10px;
   margin-bottom: 8px;
+}
+
+/* Password visibility toggle (light theme) */
+.password-field-wrapper {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.password-field-wrapper .theme-form-input.custom-input {
+  padding-right: 36px;
+}
+
+.toggle-password-button {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: inherit;
+  padding: 0;
+  height: 24px;
+  width: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toggle-password-button img {
+  height: 18px;
+  width: 18px;
+  filter: brightness(0) saturate(100%) invert(25%) sepia(8%) saturate(1034%) hue-rotate(201deg) brightness(95%) contrast(89%);
 }
