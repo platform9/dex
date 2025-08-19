@@ -71,7 +71,7 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 		}
 	}
 	if scopes.Groups {
-		p.Logger.Info("groups scope requested, fetching groups")
+		p.Logger.Debug("groups scope requested, fetching groups")
 		var err error
 		adminToken, err := getAdminTokenUnscoped(ctx, p.client, p.Host, p.AdminUsername, p.AdminPassword)
 		if err != nil {

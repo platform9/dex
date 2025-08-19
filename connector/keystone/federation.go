@@ -107,7 +107,7 @@ func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Re
 		c.logger.Error("failed to get token from federation cookies", "error", err)
 		return connector.Identity{}, err
 	}
-	c.logger.Info("successfully obtained token from federation cookies")
+	c.logger.Debug("successfully obtained token from federation cookies")
 
 	c.logger.Debug("retrieving user info")
 	tokenInfo, err = getTokenInfo(r.Context(), c.client, c.cfg.Host, ksToken, c.logger)
@@ -115,7 +115,7 @@ func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Re
 		return connector.Identity{}, err
 	}
 	if scopes.Groups {
-		c.logger.Info("groups scope requested, fetching groups")
+		c.logger.Debug("groups scope requested, fetching groups")
 		var err error
 		adminToken, err := getAdminTokenUnscoped(r.Context(), c.client, c.cfg.Host, c.cfg.AdminUsername, c.cfg.AdminPassword)
 		if err != nil {
@@ -155,13 +155,11 @@ func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Re
 // with Keystone's federation endpoint.
 func (c *FederationConnector) getKeystoneTokenFromFederation(r *http.Request) (string, error) {
 	c.logger.Debug("getting keystone token from federation cookies")
-	// remove trailing slash from c.cfg.Host
 	baseURL := strings.TrimSuffix(c.cfg.Host, "/")
-	// remove leading slash from c.cfg.FederationAuthPath
 	federationAuthPath := strings.TrimPrefix(c.cfg.FederationAuthPath, "/")
 
 	federationAuthURL := fmt.Sprintf("%s/%s", baseURL, federationAuthPath)
-	c.logger.Info("requesting keystone token from federation auth endpoint")
+	c.logger.Debug("requesting keystone token from federation auth endpoint")
 
 	req, err := http.NewRequest("GET", federationAuthURL, nil)
 	if err != nil {
