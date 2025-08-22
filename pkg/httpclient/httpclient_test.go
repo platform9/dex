@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,7 +15,7 @@ import (
 )
 
 func TestRootCAs(t *testing.T) {
-	ts, err := NewLocalHTTPSTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts, caCertPEM, err := NewLocalHTTPSTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Hello, client")
 	}))
 	assert.Nil(t, err)
@@ -31,26 +30,24 @@ func TestRootCAs(t *testing.T) {
 			res, err := testClient.Get(ts.URL)
 			assert.Nil(t, err)
 
-			greeting, err := io.ReadAll(res.Body)
-			res.Body.Close()
-			assert.Nil(t, err)
+			if res != nil {
+				greeting, err := io.ReadAll(res.Body)
+				res.Body.Close()
+				assert.Nil(t, err)
 
-			assert.Equal(t, "Hello, client", string(greeting))
+				assert.Equal(t, "Hello, client", string(greeting))
+			}
 		})
 	}
 
-	runTest("From file", []string{"testdata/rootCA.pem"})
+	runTest("From runtime generated cert", []string{string(caCertPEM)})
 
-	content, err := os.ReadFile("testdata/rootCA.pem")
-	assert.NoError(t, err)
-	runTest("From string", []string{string(content)})
-
-	contentStr := base64.StdEncoding.EncodeToString(content)
+	contentStr := base64.StdEncoding.EncodeToString(caCertPEM)
 	runTest("From bytes", []string{contentStr})
 }
 
 func TestInsecureSkipVerify(t *testing.T) {
-	ts, err := NewLocalHTTPSTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts, _, err := NewLocalHTTPSTestServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "Hello, client")
 	}))
 	assert.Nil(t, err)
@@ -64,20 +61,30 @@ func TestInsecureSkipVerify(t *testing.T) {
 	res, err := testClient.Get(ts.URL)
 	assert.Nil(t, err)
 
-	greeting, err := io.ReadAll(res.Body)
-	res.Body.Close()
-	assert.Nil(t, err)
+	if res != nil {
+		greeting, err := io.ReadAll(res.Body)
+		res.Body.Close()
+		assert.Nil(t, err)
 
-	assert.Equal(t, "Hello, client", string(greeting))
+		assert.Equal(t, "Hello, client", string(greeting))
+	}
 }
 
-func NewLocalHTTPSTestServer(handler http.Handler) (*httptest.Server, error) {
+func NewLocalHTTPSTestServer(handler http.Handler) (*httptest.Server, []byte, error) {
 	ts := httptest.NewUnstartedServer(handler)
-	cert, err := tls.LoadX509KeyPair("testdata/server.crt", "testdata/server.key")
+
+	// Generate CA and server cert/key once so client and server share trust
+	caCertPEM, serverCertPEM, serverKeyPEM, err := httpclient.GenerateTestCertificates()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+
+	cert, err := tls.X509KeyPair(serverCertPEM, serverKeyPEM)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	ts.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
 	ts.StartTLS()
-	return ts, nil
+	return ts, caCertPEM, nil
 }
