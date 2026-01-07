@@ -144,3 +144,4 @@ For release process, please read the [release documentation](https://dexidp.io/d
 ## License
 
 The project is licensed under the [Apache License, Version 2.0](LICENSE).
+
