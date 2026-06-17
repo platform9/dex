@@ -1,0 +1,60 @@
+name: Auto-rebase conflicting Dependabot PRs
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday at 6 AM UTC
+  workflow_dispatch:      # Allow manual trigger from GitHub UI
+
+permissions:
+  pull-requests: write
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rebase conflicting Dependabot PRs
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prs = await github.paginate(github.rest.pulls.list, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100
+            });
+
+            const dependabotPRs = prs.filter(pr => pr.user.login === 'dependabot[bot]');
+            console.log(`Found ${dependabotPRs.length} open Dependabot PRs`);
+
+            let rebased = 0;
+            let skipped = 0;
+
+            for (const pr of dependabotPRs) {
+              // Fetch full PR detail to get mergeable status
+              const { data: detail } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number
+              });
+
+              // mergeable === false means conflict; null means GitHub hasn't computed it yet
+              if (detail.mergeable === false) {
+                console.log(`Rebasing PR #${pr.number}: ${pr.title}`);
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  body: '@dependabot rebase'
+                });
+                rebased++;
+                // Avoid hitting GitHub secondary rate limits
+                await new Promise(r => setTimeout(r, 2000));
+              } else {
+                skipped++;
+              }
+            }
+
+            const summary = `### Dependabot Auto-Rebase Summary\n- **Total Dependabot PRs:** ${dependabotPRs.length}\n- **Rebased (conflicting):** ${rebased}\n- **Skipped (clean):** ${skipped}`;
+            await core.summary.addRaw(summary).write();
+            console.log(`Done. Rebased: ${rebased}, Skipped: ${skipped}`);
