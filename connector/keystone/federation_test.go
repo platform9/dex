@@ -2,6 +2,7 @@ package keystone
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -134,6 +135,87 @@ func TestFederation_getKeystoneTokenFromFederation(t *testing.T) {
 	}
 	if tok != "FED_TOKEN" {
 		t.Fatalf("unexpected token: got %q want %q", tok, "FED_TOKEN")
+	}
+}
+
+func TestFederation_getKeystoneTokenFromFederation_Redirect(t *testing.T) {
+	fedPath := "/fed/auth"
+	var calls int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == fedPath {
+			calls++
+			w.Header().Set("Location", "https://idp.example.com/login")
+			w.WriteHeader(http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	cfg := FederationConfig{
+		Domain:              "default",
+		Host:                ts.URL,
+		AdminUsername:       "admin",
+		AdminPassword:       "pass",
+		CustomerName:        "cust",
+		ShibbolethLoginPath: "/shib/login",
+		FederationAuthPath:  fedPath,
+		TimeoutSeconds:      5,
+	}
+	fc := newTestFederationConnector(t, cfg)
+
+	r, _ := http.NewRequest(http.MethodGet, "https://dex/callback", nil)
+	r.AddCookie(&http.Cookie{Name: "_shibsession_123", Value: "abc"})
+
+	_, err := fc.getKeystoneTokenFromFederation(r)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var retryable connector.RetryableError
+	if !errors.As(err, &retryable) {
+		t.Fatalf("expected error to satisfy connector.RetryableError, got %T: %v", err, err)
+	}
+	if retryable.RetryMessage() == "" {
+		t.Fatal("expected non-empty RetryMessage()")
+	}
+	if calls != federationAuthMaxAttempts {
+		t.Fatalf("expected %d attempts, got %d", federationAuthMaxAttempts, calls)
+	}
+}
+
+func TestFederation_getKeystoneTokenFromFederation_NonRedirectError(t *testing.T) {
+	fedPath := "/fed/auth"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == fedPath {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	cfg := FederationConfig{
+		Domain:              "default",
+		Host:                ts.URL,
+		AdminUsername:       "admin",
+		AdminPassword:       "pass",
+		CustomerName:        "cust",
+		ShibbolethLoginPath: "/shib/login",
+		FederationAuthPath:  fedPath,
+		TimeoutSeconds:      5,
+	}
+	fc := newTestFederationConnector(t, cfg)
+
+	r, _ := http.NewRequest(http.MethodGet, "https://dex/callback", nil)
+	r.AddCookie(&http.Cookie{Name: "_shibsession_123", Value: "abc"})
+
+	_, err := fc.getKeystoneTokenFromFederation(r)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var retryable connector.RetryableError
+	if errors.As(err, &retryable) {
+		t.Fatalf("did not expect a non-redirect error to satisfy connector.RetryableError, got: %v", err)
 	}
 }
 

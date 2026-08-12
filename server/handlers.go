@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -479,6 +480,12 @@ func (s *Server) handleConnectorCallback(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err != nil {
+		var retryable connector.RetryableError
+		if errors.As(err, &retryable) {
+			s.logger.WarnContext(r.Context(), "connector reported retryable error", "err", err)
+			s.renderError(r, w, http.StatusUnauthorized, retryable.RetryMessage())
+			return
+		}
 		s.logger.ErrorContext(r.Context(), "failed to authenticate", "err", err)
 		s.renderError(r, w, http.StatusInternalServerError, fmt.Sprintf("Failed to authenticate: %v", err))
 		return

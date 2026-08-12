@@ -20,6 +20,32 @@ type FederationConnector struct {
 	logger *slog.Logger
 }
 
+const (
+	// federationAuthMaxAttempts bounds retries of the idempotent federation
+	// auth GET when it redirects instead of returning a token. The endpoint
+	// normally responds in the tens of milliseconds, so a couple of quick
+	// retries costs little and papers over what has so far looked like a
+	// transient session-lookup miss rather than a genuinely invalid session.
+	federationAuthMaxAttempts = 3
+	federationAuthRetryDelay  = 150 * time.Millisecond
+)
+
+// federationSessionError indicates the federation auth endpoint redirected
+// instead of returning a token, even after retries. It implements
+// connector.RetryableError so the server can show the user a friendlier,
+// actionable message instead of a generic 500.
+type federationSessionError struct{ status int }
+
+func (e *federationSessionError) Error() string {
+	return fmt.Sprintf("federation session invalid or expired (status %d)", e.status)
+}
+
+func (e *federationSessionError) RetryMessage() string {
+	return "Your login session has expired or was already used. Please try logging in again."
+}
+
+var _ connector.RetryableError = &federationSessionError{}
+
 var (
 	_ connector.CallbackConnector = &FederationConnector{}
 	_ connector.RefreshConnector  = &FederationConnector{}
@@ -161,33 +187,24 @@ func (c *FederationConnector) getKeystoneTokenFromFederation(r *http.Request) (s
 	federationAuthURL := fmt.Sprintf("%s/%s", baseURL, federationAuthPath)
 	c.logger.Debug("requesting keystone token from federation auth endpoint")
 
-	req, err := http.NewRequest("GET", federationAuthURL, nil)
-	if err != nil {
-		c.logger.Error("failed to create federation auth request", "error", err)
-		return "", err
-	}
-
 	shibbolethCookiePrefixes := []string{
 		"_shibsession",
 		"_shibstate",
 	}
 
+	var cookies []*http.Cookie
 	for _, cookie := range r.Cookies() {
 		cookieName := strings.ToLower(cookie.Name)
 		for _, prefix := range shibbolethCookiePrefixes {
 			if strings.HasPrefix(cookieName, prefix) {
-				req.AddCookie(cookie)
+				cookies = append(cookies, cookie)
 				break
 			}
 		}
 	}
 
-	if userAgent := r.Header.Get("User-Agent"); userAgent != "" {
-		req.Header.Set("User-Agent", userAgent)
-	}
-	if referer := r.Header.Get("Referer"); referer != "" {
-		req.Header.Set("Referer", referer)
-	}
+	userAgent := r.Header.Get("User-Agent")
+	referer := r.Header.Get("Referer")
 
 	clientNoRedirect := &http.Client{
 		Timeout: c.client.Timeout,
@@ -196,21 +213,57 @@ func (c *FederationConnector) getKeystoneTokenFromFederation(r *http.Request) (s
 		},
 	}
 
-	resp, err := clientNoRedirect.Do(req)
-	if err != nil {
-		c.logger.Error("failed to execute federation auth request", "error", err)
-		return "", err
-	}
-	defer resp.Body.Close()
+	var lastStatus int
+	for attempt := 1; attempt <= federationAuthMaxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(r.Context(), "GET", federationAuthURL, nil)
+		if err != nil {
+			c.logger.Error("failed to create federation auth request", "error", err)
+			return "", err
+		}
+		for _, cookie := range cookies {
+			req.AddCookie(cookie)
+		}
+		if userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
+		if referer != "" {
+			req.Header.Set("Referer", referer)
+		}
 
-	token := resp.Header.Get("X-Subject-Token")
-	if token == "" {
-		c.logger.Error("No X-Subject-Token found in federation auth response")
-		return "", fmt.Errorf("no X-Subject-Token found in federation auth response")
+		resp, err := clientNoRedirect.Do(req)
+		if err != nil {
+			c.logger.Error("failed to execute federation auth request", "error", err)
+			return "", err
+		}
+
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			lastStatus = resp.StatusCode
+			location := resp.Header.Get("Location")
+			resp.Body.Close()
+			if attempt < federationAuthMaxAttempts {
+				c.logger.Warn("federation auth endpoint redirected, retrying",
+					"status", resp.StatusCode, "location", location, "attempt", attempt)
+				time.Sleep(federationAuthRetryDelay)
+				continue
+			}
+			c.logger.Warn("federation auth endpoint redirected after retries, session likely invalid or expired",
+				"status", resp.StatusCode, "location", location, "attempts", attempt)
+			return "", &federationSessionError{status: resp.StatusCode}
+		}
+
+		token := resp.Header.Get("X-Subject-Token")
+		resp.Body.Close()
+		if token == "" {
+			c.logger.Error("No X-Subject-Token found in federation auth response", "status", resp.StatusCode)
+			return "", fmt.Errorf("no X-Subject-Token found in federation auth response (status %d)", resp.StatusCode)
+		}
+
+		c.logger.Debug("successfully obtained keystone token from federation")
+		return token, nil
 	}
 
-	c.logger.Debug("successfully obtained keystone token from federation")
-	return token, nil
+	// Unreachable: the loop above always returns on its last iteration.
+	return "", &federationSessionError{status: lastStatus}
 }
 
 // Close does nothing since HTTP connections are closed automatically.

@@ -92,6 +92,15 @@ type SAMLConnector interface {
 	HandlePOST(s Scopes, samlResponse, inResponseTo string) (identity Identity, err error)
 }
 
+// RetryableError can be implemented by a connector's error to indicate the
+// user should be prompted to retry the login flow (e.g. an expired or
+// already-consumed upstream session) rather than shown a generic server
+// error.
+type RetryableError interface {
+	error
+	RetryMessage() string
+}
+
 // RefreshConnector is a connector that can update the client claims.
 type RefreshConnector interface {
 	// Refresh is called when a client attempts to claim a refresh token. The
