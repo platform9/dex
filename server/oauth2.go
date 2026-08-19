@@ -518,7 +518,7 @@ func (s *Server) parseAuthorizationRequest(r *http.Request) (*storage.AuthReques
 
 	if codeChallengeMethod != codeChallengeMethodS256 && codeChallengeMethod != codeChallengeMethodPlain {
 		description := fmt.Sprintf("Unsupported PKCE challenge method (%q).", codeChallengeMethod)
-		return nil, newRedirectedErr(errInvalidRequest, description)
+		return nil, newRedirectedErr(errInvalidRequest, "%s", description)
 	}
 
 	var (
@@ -602,7 +602,7 @@ func (s *Server) parseAuthorizationRequest(r *http.Request) (*storage.AuthReques
 	if rt.token {
 		if redirectURI == redirectURIOOB {
 			err := fmt.Sprintf("Cannot use response type 'token' with redirect_uri '%s'.", redirectURIOOB)
-			return nil, newRedirectedErr(errInvalidRequest, err)
+			return nil, newRedirectedErr(errInvalidRequest, "%s", err)
 		}
 	}
 
