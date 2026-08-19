@@ -549,6 +549,9 @@ func runVerify(t *testing.T, ca string, resp string, shouldSucceed bool) {
 	s := certStore{[]*x509.Certificate{cert}}
 
 	validator := dsig.NewDefaultValidationContext(s)
+	// Pin the validator's clock so signature checks don't fail once the
+	// fixture certs in testdata/ eventually expire in real time.
+	validator.Clock = dsig.NewFakeClockAt(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
 
 	data, err := os.ReadFile(resp)
 	if err != nil {

@@ -423,7 +423,7 @@ func (cli *client) DeleteClient(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return cli.delete(resourceClient, c.Name)
+	return cli.delete(resourceClient, c.ObjectMeta.Name)
 }
 
 func (cli *client) DeleteRefresh(ctx context.Context, id string) error {
@@ -493,7 +493,7 @@ func (cli *client) UpdateClient(ctx context.Context, id string, updater func(old
 
 	newClient := cli.fromStorageClient(updated)
 	newClient.ObjectMeta = c.ObjectMeta
-	return cli.put(resourceClient, c.Name, newClient)
+	return cli.put(resourceClient, c.ObjectMeta.Name, newClient)
 }
 
 func (cli *client) UpdatePassword(ctx context.Context, email string, updater func(old storage.Password) (storage.Password, error)) error {
