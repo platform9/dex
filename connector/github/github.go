@@ -457,12 +457,12 @@ func (c *githubConnector) userOrgTeams(ctx context.Context, client *http.Client)
 // is returned if one exists. Any errors encountered when building requests,
 // sending requests, and reading and decoding response data are returned.
 func get(ctx context.Context, client *http.Client, apiURL string, v interface{}) (string, error) {
-	req, err := http.NewRequest("GET", apiURL, nil)
+	req, err := http.NewRequest("GET", apiURL, nil) // #nosec G704 -- apiURL is the admin-configured GitHub API base or a pagination link from GitHub's own response, not arbitrary user input
 	if err != nil {
 		return "", fmt.Errorf("github: new req: %v", err)
 	}
 	req = req.WithContext(ctx)
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) // #nosec G704 -- see above
 	if err != nil {
 		return "", fmt.Errorf("github: get URL %v", err)
 	}

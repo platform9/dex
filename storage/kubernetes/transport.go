@@ -87,7 +87,7 @@ func newInClusterTransportHelper(info k8sapi.AuthInfo) *inClusterTransportHelper
 	user := &inClusterTransportHelper{
 		info:          info,
 		now:           time.Now,
-		tokenLocation: "/var/run/secrets/kubernetes.io/serviceaccount/token",
+		tokenLocation: "/var/run/secrets/kubernetes.io/serviceaccount/token", // #nosec G101 -- filesystem path, not a credential
 	}
 
 	user.UpdateToken()
