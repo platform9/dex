@@ -37,7 +37,7 @@ func NewHTTPClient(rootCAs []string, insecureSkipVerify bool) (*http.Client, err
 		return nil, err
 	}
 
-	tlsConfig := tls.Config{RootCAs: pool, InsecureSkipVerify: insecureSkipVerify}
+	tlsConfig := tls.Config{RootCAs: pool, InsecureSkipVerify: insecureSkipVerify} // #nosec G402 -- admin-configured opt-in, documented as insecure
 	for index, rootCABytes := range extractCAs(rootCAs) {
 		if !tlsConfig.RootCAs.AppendCertsFromPEM(rootCABytes) {
 			return nil, fmt.Errorf("rootCAs.%d is not in PEM format, certificate must be "+

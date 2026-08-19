@@ -38,7 +38,7 @@ func (c *Config) Open(id string, logger *slog.Logger) (connector.Connector, erro
 	}
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: c.InsecureSkipVerify,
+			InsecureSkipVerify: c.InsecureSkipVerify, // #nosec G402 -- admin-configured opt-in, documented as insecure
 		},
 	}
 	client := &http.Client{Transport: tr}
@@ -491,8 +491,8 @@ func getUser(ctx context.Context, client *http.Client, baseURL, userID, token st
 
 // getAllGroupsForUser returns all groups for a user (local groups + SSO groups + role groups)
 func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, token, customerName, domainID string, tokenInfo *tokenInfo, logger *slog.Logger) ([]string, error) {
-	var userGroups []string   //nolint:prealloc
-	var userGroupIDs []string //nolint:prealloc
+	var userGroups []string
+	var userGroupIDs []string
 
 	allGroups, err := getAllKeystoneGroups(ctx, client, baseURL, token)
 	if err != nil {

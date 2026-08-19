@@ -262,7 +262,7 @@ func (c *Config) openConnector(logger *slog.Logger) (*ldapConnector, error) {
 		}
 	}
 
-	tlsConfig := &tls.Config{ServerName: host, InsecureSkipVerify: c.InsecureSkipVerify}
+	tlsConfig := &tls.Config{ServerName: host, InsecureSkipVerify: c.InsecureSkipVerify} // #nosec G402 -- admin-configured opt-in, documented as insecure
 	if c.RootCA != "" || len(c.RootCAData) != 0 {
 		data := c.RootCAData
 		if len(data) == 0 {

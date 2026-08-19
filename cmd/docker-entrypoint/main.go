@@ -34,7 +34,7 @@ func realExec(args ...string) error {
 		return fmt.Errorf("cannot lookup path for command %s: %w", args[0], err)
 	}
 
-	if err := syscall.Exec(argv0, args, os.Environ()); err != nil {
+	if err := syscall.Exec(argv0, args, os.Environ()); err != nil { // #nosec G702 G204 -- args is this container's own entrypoint argv, not external input
 		return fmt.Errorf("cannot exec command %s (%q): %w", args, argv0, err)
 	}
 
@@ -55,7 +55,7 @@ func realGomplate(path string) (string, error) {
 		return "", fmt.Errorf("cannot create temp file: %w", err)
 	}
 
-	cmd := exec.Command("gomplate", "-f", path, "-o", tmpFile.Name())
+	cmd := exec.Command("gomplate", "-f", path, "-o", tmpFile.Name()) // #nosec G702 G204 -- fixed binary name; path is this container's own configured config path
 	// TODO(nabokihms): Workaround to run gomplate from a non-root directory in distroless images
 	//   gomplate tries to access CWD on start, see: https://github.com/hairyhenderson/gomplate/pull/2202
 	cmd.Dir = "/etc/dex"
