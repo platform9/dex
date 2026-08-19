@@ -50,7 +50,7 @@ jobs:
         run: |
           echo "Running Gosec scan..."
           mkdir -p tmp
-          gosec -fmt=json -severity=medium -out=tmp/gosec-report.json ./... || true
+          gosec -exclude-generated -fmt=json -severity=medium -out=tmp/gosec-report.json ./... || true
           cat tmp/gosec-report.json || echo '{"Issues":[]}'
           count=$(jq '[.Issues[] | select(.severity == "HIGH" or .severity == "CRITICAL")] | length' tmp/gosec-report.json || echo 0)
 

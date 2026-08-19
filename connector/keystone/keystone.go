@@ -38,7 +38,7 @@ func (c *Config) Open(id string, logger *slog.Logger) (connector.Connector, erro
 	}
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: c.InsecureSkipVerify,
+			InsecureSkipVerify: c.InsecureSkipVerify, // #nosec G402 -- admin-configured opt-in, documented as insecure
 		},
 	}
 	client := &http.Client{Transport: tr}

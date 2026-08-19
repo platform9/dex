@@ -745,7 +745,7 @@ func retryOnConflict(ctx context.Context, action func() error) error {
 	attempts := 0
 	getNextStep := func() time.Duration {
 		step := policy[attempts]
-		return time.Duration(step*5+rand.Intn(step)) * time.Microsecond
+		return time.Duration(step*5+rand.Intn(step)) * time.Microsecond // #nosec G404 -- retry backoff jitter, not security-sensitive
 	}
 
 	if err := action(); err == nil || !isKubernetesAPIConflictError(err) {
