@@ -132,17 +132,17 @@ const (
 	grantTypeImplicit          = "implicit"
 	grantTypePassword          = "password"
 	grantTypeDeviceCode        = "urn:ietf:params:oauth:grant-type:device_code"
-	grantTypeTokenExchange     = "urn:ietf:params:oauth:grant-type:token-exchange"
+	grantTypeTokenExchange     = "urn:ietf:params:oauth:grant-type:token-exchange" // #nosec G101 -- RFC8693 grant-type URN, not a credential
 )
 
 const (
 	// https://www.rfc-editor.org/rfc/rfc8693.html#section-3
-	tokenTypeAccess  = "urn:ietf:params:oauth:token-type:access_token"
-	tokenTypeRefresh = "urn:ietf:params:oauth:token-type:refresh_token"
-	tokenTypeID      = "urn:ietf:params:oauth:token-type:id_token"
-	tokenTypeSAML1   = "urn:ietf:params:oauth:token-type:saml1"
-	tokenTypeSAML2   = "urn:ietf:params:oauth:token-type:saml2"
-	tokenTypeJWT     = "urn:ietf:params:oauth:token-type:jwt"
+	tokenTypeAccess  = "urn:ietf:params:oauth:token-type:access_token"  // #nosec G101 -- RFC8693 token-type URN, not a credential
+	tokenTypeRefresh = "urn:ietf:params:oauth:token-type:refresh_token" // #nosec G101 -- RFC8693 token-type URN, not a credential
+	tokenTypeID      = "urn:ietf:params:oauth:token-type:id_token"      // #nosec G101 -- RFC8693 token-type URN, not a credential
+	tokenTypeSAML1   = "urn:ietf:params:oauth:token-type:saml1"         // #nosec G101 -- RFC8693 token-type URN, not a credential
+	tokenTypeSAML2   = "urn:ietf:params:oauth:token-type:saml2"         // #nosec G101 -- RFC8693 token-type URN, not a credential
+	tokenTypeJWT     = "urn:ietf:params:oauth:token-type:jwt"           // #nosec G101 -- RFC8693 token-type URN, not a credential
 )
 
 const (
@@ -402,16 +402,16 @@ func (s *Server) newIDToken(ctx context.Context, clientID string, claims storage
 	}
 
 	for _, scope := range scopes {
-		switch {
-		case scope == scopeEmail:
+		switch scope {
+		case scopeEmail:
 			tok.Email = claims.Email
 			tok.EmailVerified = &claims.EmailVerified
-		case scope == scopeGroups:
+		case scopeGroups:
 			tok.Groups = claims.Groups
-		case scope == scopeProfile:
+		case scopeProfile:
 			tok.Name = claims.Username
 			tok.PreferredUsername = claims.PreferredUsername
-		case scope == scopeFederatedID:
+		case scopeFederatedID:
 			tok.FederatedIDClaims = &federatedIDClaims{
 				ConnectorID: connID,
 				UserID:      claims.UserID,
@@ -518,7 +518,7 @@ func (s *Server) parseAuthorizationRequest(r *http.Request) (*storage.AuthReques
 
 	if codeChallengeMethod != codeChallengeMethodS256 && codeChallengeMethod != codeChallengeMethodPlain {
 		description := fmt.Sprintf("Unsupported PKCE challenge method (%q).", codeChallengeMethod)
-		return nil, newRedirectedErr(errInvalidRequest, description)
+		return nil, newRedirectedErr(errInvalidRequest, "%s", description)
 	}
 
 	var (
@@ -602,7 +602,7 @@ func (s *Server) parseAuthorizationRequest(r *http.Request) (*storage.AuthReques
 	if rt.token {
 		if redirectURI == redirectURIOOB {
 			err := fmt.Sprintf("Cannot use response type 'token' with redirect_uri '%s'.", redirectURIOOB)
-			return nil, newRedirectedErr(errInvalidRequest, err)
+			return nil, newRedirectedErr(errInvalidRequest, "%s", err)
 		}
 	}
 
@@ -720,7 +720,7 @@ func (s *storageKeySet) VerifySignature(ctx context.Context, jwt string) (payloa
 		break
 	}
 
-	skeys, err := s.Storage.GetKeys(ctx)
+	skeys, err := s.GetKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
