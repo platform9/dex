@@ -51,15 +51,15 @@ func (testDiscard) Write(p []byte) (int, error) { return len(p), nil }
 
 func TestFederation_LoginURL(t *testing.T) {
 	cases := []struct {
-		name       string
-		host       string
-		publicHost string
-		path       string
-		wantHost   string
+		name         string
+		host         string
+		externalHost string
+		path         string
+		wantHost     string
 	}{
 		{"no trailing/leading slash", "https://abc.com/keystone", "", "shib/login", "abc.com"},
 		{"with trailing/leading slash", "https://abc.com/keystone/", "", "/shib/login", "abc.com"},
-		{"publicHost overrides host for redirect", "https://internal-keystone.svc:5000/keystone", "https://du.example.com/keystone", "/shib/login", "du.example.com"},
+		{"externalHost overrides host for redirect", "https://internal-keystone.svc:5000/keystone", "https://du.example.com/keystone", "/shib/login", "du.example.com"},
 	}
 
 	for _, tc := range cases {
@@ -67,7 +67,7 @@ func TestFederation_LoginURL(t *testing.T) {
 			cfg := FederationConfig{
 				Domain:              "default",
 				Host:                tc.host,
-				PublicHost:          tc.publicHost,
+				ExternalHost:        tc.externalHost,
 				AdminUsername:       "admin",
 				AdminPassword:       "pass",
 				CustomerName:        "cust",

@@ -76,7 +76,7 @@ func NewFederationConnector(cfg FederationConfig, logger *slog.Logger) (*Federat
 }
 
 func (c *FederationConnector) LoginURL(scopes connector.Scopes, callbackURL, state string) (string, error) {
-	host := c.cfg.PublicHost
+	host := c.cfg.ExternalHost
 	if host == "" {
 		host = c.cfg.Host
 	}
