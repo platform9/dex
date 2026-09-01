@@ -76,7 +76,11 @@ func NewFederationConnector(cfg FederationConfig, logger *slog.Logger) (*Federat
 }
 
 func (c *FederationConnector) LoginURL(scopes connector.Scopes, callbackURL, state string) (string, error) {
-	baseURL := strings.TrimSuffix(c.cfg.Host, "/")
+	host := c.cfg.PublicHost
+	if host == "" {
+		host = c.cfg.Host
+	}
+	baseURL := strings.TrimSuffix(host, "/")
 	baseURL = strings.TrimSuffix(baseURL, "/keystone")
 	ssoLoginPath := strings.TrimPrefix(c.cfg.ShibbolethLoginPath, "/")
 

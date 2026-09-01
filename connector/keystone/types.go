@@ -17,7 +17,11 @@ type FederationConfig struct {
 	// Domain is domain ID, typically "default"
 	Domain string `json:"domain"`
 	// Host is Keystone host URL, e.g. https://keystone.pf9.com:5000
+	// Used for server-to-server Keystone API calls (federation auth, token info, admin token, user/group lookups).
 	Host string `json:"keystoneHost"`
+	// PublicHost is the publicly-resolvable Keystone host URL used to build the browser-facing
+	// SSO redirect (LoginURL). Falls back to Host when unset, e.g. when Host is already public.
+	PublicHost string `json:"publicKeystoneHost,omitempty"`
 	// AdminUsername is Keystone admin username
 	AdminUsername string `json:"keystoneUsername"`
 	// AdminPassword is Keystone admin password
