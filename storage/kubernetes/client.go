@@ -508,6 +508,16 @@ func getInClusterConfigNamespace(token, namespaceENV, namespacePath string) (str
 	return "", fmt.Errorf("%v: trying to get namespace from file: %v", err, fileErr)
 }
 
+// formatKubernetesHost wraps host in square brackets if and only if it is an
+// IPv6 literal. url.Parse rejects bracketed IPv4 addresses and hostnames as
+// invalid IP-literals, so they must be left unwrapped.
+func formatKubernetesHost(host string) string {
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		return "[" + host + "]"
+	}
+	return host
+}
+
 func inClusterConfig() (k8sapi.Cluster, k8sapi.AuthInfo, string, error) {
 	const (
 		serviceAccountPath          = "/var/run/secrets/kubernetes.io/serviceaccount/"
@@ -528,11 +538,8 @@ func inClusterConfig() (k8sapi.Cluster, k8sapi.AuthInfo, string, error) {
 			kubernetesServicePortENV,
 		)
 	}
-	// we need to wrap IPv6 addresses in square brackets
-	// IPv4 also works with square brackets
-	host = "[" + host + "]"
 	cluster := k8sapi.Cluster{
-		Server:               "https://" + host + ":" + port,
+		Server:               "https://" + formatKubernetesHost(host) + ":" + port,
 		CertificateAuthority: serviceAccountCAPath,
 	}
 
