@@ -16,6 +16,23 @@ import (
 	"github.com/dexidp/dex/storage/kubernetes/k8sapi"
 )
 
+func TestFormatKubernetesHost(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		want string
+	}{
+		{"IPv4 address is not bracketed", "10.96.0.1", "10.96.0.1"},
+		{"IPv6 address is bracketed", "fd00::1", "[fd00::1]"},
+		{"hostname is not bracketed", "kubernetes.default.svc", "kubernetes.default.svc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, formatKubernetesHost(tt.host))
+		})
+	}
+}
+
 // This test does not have an explicit error condition but is used
 // with the race detector to detect the safety of idToName.
 func TestIDToName(t *testing.T) {
