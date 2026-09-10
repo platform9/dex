@@ -121,29 +121,43 @@ type role struct {
 	Description string `json:"description"`
 }
 
-// project represents a Keystone project
-type project struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	DomainID    string `json:"domain_id"`
-	Description string `json:"description"`
-}
-
 // identifierContainer represents an object with an ID
 type identifierContainer struct {
 	ID string `json:"id"`
 }
 
-// projectScope represents a project scope for authorization
-type projectScope struct {
-	Project identifierContainer `json:"project"`
+// namedIdentifier represents an object with an ID and a Name, as returned
+// by Keystone when a request includes include_names=true.
+type namedIdentifier struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
-// roleAssignment represents a role assignment
+// projectScope represents a project scope for authorization, including its
+// owning domain (only populated when the role_assignments request includes
+// include_names=true).
+type projectScope struct {
+	ID     string          `json:"id"`
+	Name   string          `json:"name"`
+	Domain namedIdentifier `json:"domain"`
+}
+
+// systemScope represents a system-wide scope for authorization.
+type systemScope struct {
+	All bool `json:"all"`
+}
+
+// roleAssignment represents a role assignment. Scope is exactly one of
+// Project, Domain, or System, mirroring Keystone's own mutually-exclusive
+// scope model.
 type roleAssignment struct {
-	Scope projectScope        `json:"scope"`
-	User  identifierContainer `json:"user"`
-	Role  identifierContainer `json:"role"`
+	Scope struct {
+		Project *projectScope    `json:"project,omitempty"`
+		Domain  *namedIdentifier `json:"domain,omitempty"`
+		System  *systemScope     `json:"system,omitempty"`
+	} `json:"scope"`
+	User identifierContainer `json:"user"`
+	Role namedIdentifier     `json:"role"`
 }
 
 // connectorData represents data stored with the connector
