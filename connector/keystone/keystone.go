@@ -343,9 +343,6 @@ func getRoleAssignments(ctx context.Context, client *http.Client, baseURL, token
 	}
 	if len(opts.userID) > 0 {
 		endpoint = fmt.Sprintf("%s?include_names&user.id=%s", endpoint, opts.userID)
-		if opts.effective {
-			endpoint += "&effective"
-		}
 	} else if len(opts.groupID) > 0 {
 		endpoint = fmt.Sprintf("%s?include_names&group.id=%s", endpoint, opts.groupID)
 	}
@@ -468,11 +465,6 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 	}
 
 	// Get user-related role assignments.
-	//
-	// Two queries are needed: "effective" expands role implications (e.g. admin implies
-	// member/reader) and OS-Inherit domain roles down to their concrete projects, but Keystone
-	// drops system-scoped assignments (e.g. system.all) entirely when "effective" is set. The
-	// non-effective query is the only one that returns those, so both are fetched and merged.
 	roleAssignments := []roleAssignment{}
 	localUserRoleAssignments, err := getRoleAssignments(ctx, client, baseURL, token, getRoleAssignmentsOptions{
 		userID: tokenInfo.User.ID,
@@ -482,16 +474,6 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 		return userGroups, err
 	}
 	roleAssignments = append(roleAssignments, localUserRoleAssignments...)
-
-	effectiveUserRoleAssignments, err := getRoleAssignments(ctx, client, baseURL, token, getRoleAssignmentsOptions{
-		userID:    tokenInfo.User.ID,
-		effective: true,
-	}, logger)
-	if err != nil {
-		logger.Error("failed to fetch effective role assignments for user", "userID", tokenInfo.User.ID, "error", err)
-		return userGroups, err
-	}
-	roleAssignments = append(roleAssignments, effectiveUserRoleAssignments...)
 
 	// Get group-related role assignments
 	for _, groupID := range userGroupIDs {
