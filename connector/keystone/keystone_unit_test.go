@@ -169,6 +169,85 @@ func TestGetAllGroupsForUser_ProjectOnlyUsesRowDomainNotConfig(t *testing.T) {
 	}
 }
 
+// effectiveDropsSystemScopeHandler mimics real Keystone behavior observed against
+// a live deployment: a GET /v3/role_assignments?user.id=... request without
+// "effective" returns a system-scoped assignment, but the same request with
+// "effective" set silently omits it (system-scoped assignments have no
+// project/domain to expand into). The connector must merge both queries so
+// system-scoped roles aren't lost.
+func effectiveDropsSystemScopeHandler(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v3/groups"):
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(groupsResponse{})
+			return
+		case strings.Contains(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(groupsResponse{})
+			return
+		case strings.HasSuffix(r.URL.Path, "/v3/role_assignments"):
+			w.WriteHeader(http.StatusOK)
+			if strings.Contains(r.URL.RawQuery, "effective") {
+				_, _ = w.Write([]byte(`{
+					"role_assignments": [
+						{
+							"scope": {"project": {"id": "proj-1", "name": "My_Project", "domain": {"id": "dom-1", "name": "Cust_Domain"}}},
+							"user": {"id": "u1"},
+							"role": {"id": "role-admin", "name": "admin"}
+						}
+					]
+				}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{
+				"role_assignments": [
+					{
+						"scope": {"project": {"id": "proj-1", "name": "My_Project", "domain": {"id": "dom-1", "name": "Cust_Domain"}}},
+						"user": {"id": "u1"},
+						"role": {"id": "role-admin", "name": "admin"}
+					},
+					{
+						"scope": {"system": {"all": true}},
+						"user": {"id": "u1"},
+						"role": {"id": "role-pa", "name": "platform_admin"}
+					}
+				]
+			}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}
+}
+
+func TestGetAllGroupsForUser_EffectiveDoesNotDropSystemScope(t *testing.T) {
+	ts := httptest.NewServer(effectiveDropsSystemScopeHandler(t))
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
+	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
+
+	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "login-domain", info, logger)
+	if err != nil {
+		t.Fatalf("getAllGroupsForUser error: %v", err)
+	}
+
+	want := map[string]bool{
+		"cust-cust-domain-my-project-admin": true,
+		"cust-platform_admin":               true,
+	}
+	if len(groups) != len(want) {
+		t.Fatalf("unexpected groups: got %v, want keys %v", groups, want)
+	}
+	for _, g := range groups {
+		if !want[g] {
+			t.Errorf("unexpected group %q in result %v", g, groups)
+		}
+	}
+}
+
 func TestGenerateGroupName(t *testing.T) {
 	p := projectScope{Name: "My_Project", Domain: namedIdentifier{Name: "My_Domain"}}
 	role := namedIdentifier{Name: "_member_"}

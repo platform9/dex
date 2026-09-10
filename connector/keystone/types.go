@@ -167,6 +167,7 @@ type connectorData struct {
 
 // getRoleAssignmentsOptions represents options for getting role assignments
 type getRoleAssignmentsOptions struct {
-	userID  string
-	groupID string
+	userID    string
+	groupID   string
+	effective bool
 }
