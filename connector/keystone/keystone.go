@@ -342,9 +342,9 @@ func getRoleAssignments(ctx context.Context, client *http.Client, baseURL, token
 		return nil, err
 	}
 	if len(opts.userID) > 0 {
-		endpoint = fmt.Sprintf("%s?effective&user.id=%s", endpoint, opts.userID)
+		endpoint = fmt.Sprintf("%s?include_names&user.id=%s", endpoint, opts.userID)
 	} else if len(opts.groupID) > 0 {
-		endpoint = fmt.Sprintf("%s?group.id=%s", endpoint, opts.groupID)
+		endpoint = fmt.Sprintf("%s?include_names&group.id=%s", endpoint, opts.groupID)
 	}
 
 	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail#list-role-assignments
@@ -376,80 +376,6 @@ func getRoleAssignments(ctx context.Context, client *http.Client, baseURL, token
 	}
 
 	return roleAssignmentResp.RoleAssignments, nil
-}
-
-// getRoles returns all roles in keystone
-func getRoles(ctx context.Context, client *http.Client, baseURL, token string, logger *slog.Logger) ([]role, error) {
-	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail,list-roles-detail#list-roles
-	rolesURL, err := url.JoinPath(baseURL, "v3", "roles")
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodGet, rolesURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-Auth-Token", token)
-	req = req.WithContext(ctx)
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Error("failed to fetch keystone roles", "error", err)
-		return nil, err
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	rolesResp := struct {
-		Roles []role `json:"roles"`
-	}{}
-
-	err = json.Unmarshal(data, &rolesResp)
-	if err != nil {
-		return nil, err
-	}
-
-	return rolesResp.Roles, nil
-}
-
-// getProjects returns all projects in keystone
-func getProjects(ctx context.Context, client *http.Client, baseURL, token string, logger *slog.Logger) ([]project, error) {
-	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail,list-roles-detail#list-roles
-	projectsURL, err := url.JoinPath(baseURL, "v3", "projects")
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodGet, projectsURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-Auth-Token", token)
-	req = req.WithContext(ctx)
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Error("failed to fetch keystone projects", "error", err)
-		return nil, err
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	projectsResp := struct {
-		Projects []project `json:"projects"`
-	}{}
-
-	err = json.Unmarshal(data, &projectsResp)
-	if err != nil {
-		return nil, err
-	}
-
-	return projectsResp.Projects, nil
 }
 
 func getUser(ctx context.Context, client *http.Client, baseURL, userID, token string) (*userResponse, error) {
@@ -538,7 +464,7 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 		userGroupIDs = append(userGroupIDs, localGroup.ID)
 	}
 
-	// Get user-related role assignments
+	// Get user-related role assignments.
 	roleAssignments := []roleAssignment{}
 	localUserRoleAssignments, err := getRoleAssignments(ctx, client, baseURL, token, getRoleAssignmentsOptions{
 		userID: tokenInfo.User.ID,
@@ -566,24 +492,6 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 		return userGroups, nil
 	}
 
-	roles, err := getRoles(ctx, client, baseURL, token, logger)
-	if err != nil {
-		return userGroups, err
-	}
-	roleMap := map[string]role{}
-	for _, role := range roles {
-		roleMap[role.ID] = role
-	}
-
-	projects, err := getProjects(ctx, client, baseURL, token, logger)
-	if err != nil {
-		return userGroups, err
-	}
-	projectMap := map[string]project{}
-	for _, project := range projects {
-		projectMap[project.ID] = project
-	}
-
 	// 3. Now create groups based on the role assignments
 	roleGroups := make([]string, 0, len(roleAssignments))
 
@@ -595,19 +503,19 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 			return userGroups, err
 		}
 	}
-	for _, roleAssignment := range roleAssignments {
-		role, ok := roleMap[roleAssignment.Role.ID]
-		if !ok {
-			// Ignore role assignments to non-existent roles (shouldn't happen)
+	for _, ra := range roleAssignments {
+		if ra.Role.Name == "" {
+			// Ignore role assignments Keystone couldn't resolve a name for
 			continue
 		}
-		project, ok := projectMap[roleAssignment.Scope.Project.ID]
-		if !ok {
-			// Ignore role assignments to non-existent projects (shouldn't happen)
-			continue
+		switch {
+		case ra.Scope.Project != nil:
+			roleGroups = append(roleGroups, generateGroupName(*ra.Scope.Project, ra.Role, customerName))
+		case ra.Scope.Domain != nil:
+			roleGroups = append(roleGroups, generateDomainGroupName(*ra.Scope.Domain, ra.Role, customerName))
+		case ra.Scope.System != nil:
+			roleGroups = append(roleGroups, generateSystemGroupName(ra.Role, customerName))
 		}
-		groupName := generateGroupName(project, role, customerName, domainID)
-		roleGroups = append(roleGroups, groupName)
 	}
 
 	// combine local groups + sso groups + role groups
@@ -665,15 +573,34 @@ func pruneDuplicates(ss []string) []string {
 	return ns
 }
 
-// generateGroupName generates a group name based on project, role, customer name, and domain ID
-func generateGroupName(project project, role role, customerName, domainID string) string {
+// generateGroupName generates a group name based on project scope and role
+func generateGroupName(project projectScope, role namedIdentifier, customerName string) string {
 	roleName := role.Name
 	if roleName == "_member_" {
 		roleName = "member"
 	}
-	domainName := strings.ToLower(strings.ReplaceAll(domainID, "_", "-"))
+	domainName := strings.ToLower(strings.ReplaceAll(project.Domain.Name, "_", "-"))
 	projectName := strings.ToLower(strings.ReplaceAll(project.Name, "_", "-"))
 	return customerName + "-" + domainName + "-" + projectName + "-" + roleName
+}
+
+// generateDomainGroupName generates a group name for a domain-scoped role assignment
+func generateDomainGroupName(domain namedIdentifier, role namedIdentifier, customerName string) string {
+	roleName := role.Name
+	if roleName == "_member_" {
+		roleName = "member"
+	}
+	domainName := strings.ToLower(strings.ReplaceAll(domain.Name, "_", "-"))
+	return customerName + "-" + domainName + "-" + roleName
+}
+
+// generateSystemGroupName generates a group name for a system-scoped role assignment
+func generateSystemGroupName(role namedIdentifier, customerName string) string {
+	roleName := role.Name
+	if roleName == "_member_" {
+		roleName = "member"
+	}
+	return customerName + "-" + roleName
 }
 
 func findGroupByID(groups []keystoneGroup, groupID string) (group keystoneGroup, ok bool) {
