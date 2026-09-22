@@ -1146,6 +1146,9 @@ func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request, cli
 			hasOpenIDScope = true
 		case scopeOfflineAccess, scopeEmail, scopeProfile, scopeGroups, scopeFederatedID:
 		default:
+			if isDomain, isProject, _ := parseDomainProjectScope(scope); isDomain || isProject {
+				continue
+			}
 			peerID, ok := parseCrossClientScope(scope)
 			if !ok {
 				unrecognized = append(unrecognized, scope)
@@ -1205,7 +1208,16 @@ func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request, cli
 	// Login
 	username := q.Get("username")
 	password := q.Get("password")
-	identity, ok, err := passwordConnector.Login(ctx, parseScopes(scopes), username, password)
+	loginScopes := parseScopes(scopes)
+	// domain_id/project_id form fields take precedence over the
+	// domain:<id>/project:<id> scope-token convention parseScopes extracts.
+	if domainID := q.Get("domain_id"); domainID != "" {
+		loginScopes.DomainID = domainID
+	}
+	if projectID := q.Get("project_id"); projectID != "" {
+		loginScopes.ProjectID = projectID
+	}
+	identity, ok, err := passwordConnector.Login(ctx, loginScopes, username, password)
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "failed to login user", "err", err)
 		s.tokenErrHelper(w, errInvalidRequest, "Could not login user", http.StatusBadRequest)

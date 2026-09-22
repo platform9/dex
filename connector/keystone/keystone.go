@@ -65,7 +65,7 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 			return connector.Identity{}, false, err
 		}
 	} else {
-		token, tokenInfo, err = p.authenticate(ctx, username, password)
+		token, tokenInfo, err = p.authenticate(ctx, username, password, scopes)
 		if err != nil || tokenInfo == nil {
 			return identity, false, err
 		}
@@ -73,12 +73,12 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 	if scopes.Groups {
 		p.Logger.Debug("groups scope requested, fetching groups")
 		var err error
-		adminToken, err := getAdminTokenUnscoped(ctx, p.client, p.Host, p.AdminUsername, p.AdminPassword)
+		adminToken, err := getAdminTokenUnscoped(ctx, p.client, p.Host, p.AdminUsername, p.AdminPassword, p.Domain)
 		if err != nil {
 			p.Logger.Error("failed to obtain admin token", "error", err)
 			return identity, false, err
 		}
-		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, adminToken, p.CustomerName, p.Domain.Name, tokenInfo, p.Logger)
+		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, adminToken, p.CustomerName, p.Domain.Name, scopes.ProjectID, tokenInfo, p.Logger)
 		if err != nil {
 			return connector.Identity{}, false, err
 		}
@@ -111,7 +111,7 @@ func (p *conn) Prompt() string { return "username" }
 func (p *conn) Refresh(
 	ctx context.Context, scopes connector.Scopes, identity connector.Identity,
 ) (connector.Identity, error) {
-	token, err := getAdminTokenUnscoped(ctx, p.client, p.Host, p.AdminUsername, p.AdminPassword)
+	token, err := getAdminTokenUnscoped(ctx, p.client, p.Host, p.AdminUsername, p.AdminPassword, p.Domain)
 	if err != nil {
 		p.Logger.Error("failed to obtain admin token", "error", err)
 		return identity, err
@@ -148,7 +148,7 @@ func (p *conn) Refresh(
 
 	if scopes.Groups {
 		var err error
-		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, token, p.CustomerName, p.Domain.Name, tokenInfo, p.Logger)
+		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, token, p.CustomerName, p.Domain.Name, scopes.ProjectID, tokenInfo, p.Logger)
 		if err != nil {
 			return identity, err
 		}
@@ -156,7 +156,17 @@ func (p *conn) Refresh(
 	return identity, nil
 }
 
-func (p *conn) authenticate(ctx context.Context, username, pass string) (string, *tokenInfo, error) {
+// defaultUserDomainID is the domain an end user logs into when the request
+// has no domain_id. Distinct from Config.Domain, which is the admin
+// service account's domain (see getAdminTokenUnscoped).
+const defaultUserDomainID = "default"
+
+func (p *conn) authenticate(ctx context.Context, username, pass string, scopes connector.Scopes) (string, *tokenInfo, error) {
+	domainID := scopes.DomainID
+	if domainID == "" {
+		domainID = defaultUserDomainID
+	}
+	domain := domainKeystone{ID: domainID}
 	jsonData := loginRequestData{
 		auth: auth{
 			Identity: identity{
@@ -164,7 +174,7 @@ func (p *conn) authenticate(ctx context.Context, username, pass string) (string,
 				Password: password{
 					User: user{
 						Name:     username,
-						Domain:   p.Domain,
+						Domain:   domain,
 						Password: pass,
 					},
 				},
@@ -217,10 +227,9 @@ func (p *conn) authenticate(ctx context.Context, username, pass string) (string,
 	return token, &tokenResp.Token, nil
 }
 
-func getAdminTokenUnscoped(ctx context.Context, client *http.Client, baseURL, adminUsername, adminPassword string) (string, error) {
-	domain := domainKeystone{
-		Name: "Default",
-	}
+// getAdminTokenUnscoped authenticates the connector's admin service
+// account. adminDomain is that account's domain (Config.Domain).
+func getAdminTokenUnscoped(ctx context.Context, client *http.Client, baseURL, adminUsername, adminPassword string, adminDomain domainKeystone) (string, error) {
 	jsonData := loginRequestData{
 		auth: auth{
 			Identity: identity{
@@ -228,7 +237,7 @@ func getAdminTokenUnscoped(ctx context.Context, client *http.Client, baseURL, ad
 				Password: password{
 					User: user{
 						Name:     adminUsername,
-						Domain:   domain,
+						Domain:   adminDomain,
 						Password: adminPassword,
 					},
 				},
@@ -346,6 +355,9 @@ func getRoleAssignments(ctx context.Context, client *http.Client, baseURL, token
 	} else if len(opts.groupID) > 0 {
 		endpoint = fmt.Sprintf("%s?include_names&group.id=%s", endpoint, opts.groupID)
 	}
+	if len(opts.projectID) > 0 {
+		endpoint = fmt.Sprintf("%s&scope.project.id=%s", endpoint, opts.projectID)
+	}
 
 	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail#list-role-assignments
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
@@ -416,7 +428,7 @@ func getUser(ctx context.Context, client *http.Client, baseURL, userID, token st
 }
 
 // getAllGroupsForUser returns all groups for a user (local groups + SSO groups + role groups)
-func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, token, customerName, domainID string, tokenInfo *tokenInfo, logger *slog.Logger) ([]string, error) {
+func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, token, customerName, domainID, projectID string, tokenInfo *tokenInfo, logger *slog.Logger) ([]string, error) {
 	var userGroups []string
 	var userGroupIDs []string
 
@@ -467,7 +479,8 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 	// Get user-related role assignments.
 	roleAssignments := []roleAssignment{}
 	localUserRoleAssignments, err := getRoleAssignments(ctx, client, baseURL, token, getRoleAssignmentsOptions{
-		userID: tokenInfo.User.ID,
+		userID:    tokenInfo.User.ID,
+		projectID: projectID,
 	}, logger)
 	if err != nil {
 		logger.Error("failed to fetch role assignments for user", "userID", tokenInfo.User.ID, "error", err)
@@ -478,7 +491,8 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 	// Get group-related role assignments
 	for _, groupID := range userGroupIDs {
 		groupRoleAssignments, err := getRoleAssignments(ctx, client, baseURL, token, getRoleAssignmentsOptions{
-			groupID: groupID,
+			groupID:   groupID,
+			projectID: projectID,
 		}, logger)
 		if err != nil {
 			logger.Error("failed to fetch role assignments for group", "groupID", groupID, "error", err)

@@ -117,12 +117,12 @@ func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Re
 	if scopes.Groups {
 		c.logger.Debug("groups scope requested, fetching groups")
 		var err error
-		adminToken, err := getAdminTokenUnscoped(r.Context(), c.client, c.cfg.Host, c.cfg.AdminUsername, c.cfg.AdminPassword)
+		adminToken, err := getAdminTokenUnscoped(r.Context(), c.client, c.cfg.Host, c.cfg.AdminUsername, c.cfg.AdminPassword, domainKeystone{Name: c.cfg.Domain})
 		if err != nil {
 			c.logger.Error("failed to obtain admin token", "error", err)
 			return identity, err
 		}
-		identity.Groups, err = getAllGroupsForUser(r.Context(), c.client, c.cfg.Host, adminToken, c.cfg.CustomerName, c.cfg.Domain, tokenInfo, c.logger)
+		identity.Groups, err = getAllGroupsForUser(r.Context(), c.client, c.cfg.Host, adminToken, c.cfg.CustomerName, c.cfg.Domain, scopes.ProjectID, tokenInfo, c.logger)
 		if err != nil {
 			return connector.Identity{}, err
 		}
@@ -225,7 +225,7 @@ func (c *FederationConnector) Refresh(
 ) (connector.Identity, error) {
 	c.logger.Info("refresh called", "userID", identity.UserID)
 
-	adminToken, err := getAdminTokenUnscoped(ctx, c.client, c.cfg.Host, c.cfg.AdminUsername, c.cfg.AdminPassword)
+	adminToken, err := getAdminTokenUnscoped(ctx, c.client, c.cfg.Host, c.cfg.AdminUsername, c.cfg.AdminPassword, domainKeystone{Name: c.cfg.Domain})
 	if err != nil {
 		c.logger.Error("failed to obtain admin token for refresh", "error", err)
 		return identity, err
@@ -272,7 +272,7 @@ func (c *FederationConnector) Refresh(
 	if scopes.Groups {
 		c.logger.Info("refreshing groups", "userID", identity.UserID)
 		var err error
-		identity.Groups, err = getAllGroupsForUser(ctx, c.client, c.cfg.Host, adminToken, c.cfg.CustomerName, c.cfg.Domain, tokenInfo, c.logger)
+		identity.Groups, err = getAllGroupsForUser(ctx, c.client, c.cfg.Host, adminToken, c.cfg.CustomerName, c.cfg.Domain, scopes.ProjectID, tokenInfo, c.logger)
 		if err != nil {
 			c.logger.Error("failed to get groups", "userID", identity.UserID, "error", err)
 			return identity, err

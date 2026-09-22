@@ -116,7 +116,26 @@ const (
 	scopeProfile           = "profile"
 	scopeFederatedID       = "federated:id"
 	scopeCrossClientPrefix = "audience:server:client_id:"
+
+	// scopeDomainPrefix and scopeProjectPrefix let a client pass a
+	// domain/project ID via the "scope" parameter (for clients that can't
+	// set a separate form field), e.g. "domain:<id>"/"project:<id>".
+	scopeDomainPrefix  = "domain:"
+	scopeProjectPrefix = "project:"
 )
+
+// parseDomainProjectScope extracts a domain:<id>/project:<id> scope's kind
+// and value, if scope uses that convention.
+func parseDomainProjectScope(scope string) (isDomain, isProject bool, value string) {
+	switch {
+	case strings.HasPrefix(scope, scopeDomainPrefix):
+		return true, false, strings.TrimPrefix(scope, scopeDomainPrefix)
+	case strings.HasPrefix(scope, scopeProjectPrefix):
+		return false, true, strings.TrimPrefix(scope, scopeProjectPrefix)
+	default:
+		return false, false, ""
+	}
+}
 
 const (
 	deviceCallbackURI = "/device/callback"
@@ -170,6 +189,12 @@ func parseScopes(scopes []string) connector.Scopes {
 			s.OfflineAccess = true
 		case scopeGroups:
 			s.Groups = true
+		default:
+			if isDomain, isProject, value := parseDomainProjectScope(scope); isDomain {
+				s.DomainID = value
+			} else if isProject {
+				s.ProjectID = value
+			}
 		}
 	}
 	return s
@@ -532,6 +557,9 @@ func (s *Server) parseAuthorizationRequest(r *http.Request) (*storage.AuthReques
 			hasOpenIDScope = true
 		case scopeOfflineAccess, scopeEmail, scopeProfile, scopeGroups, scopeFederatedID:
 		default:
+			if isDomain, isProject, _ := parseDomainProjectScope(scope); isDomain || isProject {
+				continue
+			}
 			peerID, ok := parseCrossClientScope(scope)
 			if !ok {
 				unrecognized = append(unrecognized, scope)
