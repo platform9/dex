@@ -344,7 +344,9 @@ func getUserLocalGroups(ctx context.Context, client *http.Client, baseURL, userI
 	return groupsResp.Groups, nil
 }
 
-// getRoleAssignments returns role assignments for a user or group
+// getRoleAssignments returns role assignments for a user or group. If
+// opts.projectID is set, results are limited to that project's rows plus
+// all domain-/system-scoped rows.
 func getRoleAssignments(ctx context.Context, client *http.Client, baseURL, token string, opts getRoleAssignmentsOptions, logger *slog.Logger) ([]roleAssignment, error) {
 	endpoint, err := url.JoinPath(baseURL, "v3", "role_assignments")
 	if err != nil {
@@ -354,9 +356,6 @@ func getRoleAssignments(ctx context.Context, client *http.Client, baseURL, token
 		endpoint = fmt.Sprintf("%s?include_names&user.id=%s", endpoint, opts.userID)
 	} else if len(opts.groupID) > 0 {
 		endpoint = fmt.Sprintf("%s?include_names&group.id=%s", endpoint, opts.groupID)
-	}
-	if len(opts.projectID) > 0 {
-		endpoint = fmt.Sprintf("%s&scope.project.id=%s", endpoint, opts.projectID)
 	}
 
 	// https://docs.openstack.org/api-ref/identity/v3/?expanded=validate-and-show-information-for-token-detail,list-role-assignments-detail#list-role-assignments
@@ -387,7 +386,10 @@ func getRoleAssignments(ctx context.Context, client *http.Client, baseURL, token
 		return nil, err
 	}
 
-	return roleAssignmentResp.RoleAssignments, nil
+	if opts.projectID == "" {
+		return roleAssignmentResp.RoleAssignments, nil
+	}
+	return filterByProject(roleAssignmentResp.RoleAssignments, opts.projectID), nil
 }
 
 func getUser(ctx context.Context, client *http.Client, baseURL, userID, token string) (*userResponse, error) {
@@ -572,6 +574,19 @@ func getTokenInfo(ctx context.Context, client *http.Client, baseURL, token strin
 	}
 
 	return &tokenResp.Token, nil
+}
+
+// filterByProject keeps domain- and system-scoped assignments plus
+// project-scoped assignments matching projectID, dropping every other
+// project's assignments.
+func filterByProject(ras []roleAssignment, projectID string) []roleAssignment {
+	out := make([]roleAssignment, 0, len(ras))
+	for _, ra := range ras {
+		if ra.Scope.Project == nil || ra.Scope.Project.ID == projectID {
+			out = append(out, ra)
+		}
+	}
+	return out
 }
 
 func pruneDuplicates(ss []string) []string {

@@ -54,47 +54,105 @@ func TestGetRoleAssignments_IncludeNames(t *testing.T) {
 }
 
 func TestGetRoleAssignments_ProjectIDFilter(t *testing.T) {
+	// getRoleAssignments makes one unfiltered request (scope.project.id is
+	// never sent) and filters client-side, since Keystone's server-side
+	// filter would also drop domain-/system-scoped rows.
+	var callCount int
 	var gotQuery string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
 		gotQuery = r.URL.RawQuery
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			RoleAssignments []roleAssignment `json:"role_assignments"`
-		}{})
+		_, _ = w.Write([]byte(allRoleAssignmentsBody))
 	}))
 	defer ts.Close()
 
 	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
 
-	if _, err := getRoleAssignments(t.Context(), ts.Client(), ts.URL, "tok", getRoleAssignmentsOptions{userID: "u1", projectID: "proj-1"}, logger); err != nil {
+	ras, err := getRoleAssignments(t.Context(), ts.Client(), ts.URL, "tok", getRoleAssignmentsOptions{userID: "u1", projectID: "proj-1"}, logger)
+	if err != nil {
 		t.Fatalf("getRoleAssignments (userID+projectID) error: %v", err)
 	}
-
+	if callCount != 1 {
+		t.Fatalf("expected exactly 1 request, got %d", callCount)
+	}
 	unescaped, err := url.QueryUnescape(gotQuery)
 	if err != nil {
 		t.Fatalf("failed to unescape query: %v", err)
 	}
-	if !strings.Contains(unescaped, "scope.project.id=proj-1") {
-		t.Fatalf("expected scope.project.id=proj-1 in request, got query: %q", gotQuery)
+	if strings.Contains(unescaped, "scope.project.id=") {
+		t.Fatalf("expected no scope.project.id in the request (filtering is client-side), got: %q", gotQuery)
 	}
 	if !strings.Contains(unescaped, "user.id=u1") {
-		t.Fatalf("expected user.id=u1 in request, got query: %q", gotQuery)
+		t.Fatalf("expected user.id=u1 in request, got: %q", gotQuery)
 	}
 
-	// projectID also narrows a group-scoped lookup.
-	gotQuery = ""
-	if _, err := getRoleAssignments(t.Context(), ts.Client(), ts.URL, "tok", getRoleAssignmentsOptions{groupID: "g1", projectID: "proj-1"}, logger); err != nil {
-		t.Fatalf("getRoleAssignments (groupID+projectID) error: %v", err)
+	// allRoleAssignmentsBody has one project-scoped (proj-1), one
+	// domain-scoped, one system-scoped row — all three should survive.
+	if len(ras) != 3 {
+		t.Fatalf("expected all 3 rows (project-1 matches, domain/system always kept), got %d: %+v", len(ras), ras)
 	}
-	unescaped, err = url.QueryUnescape(gotQuery)
+}
+
+func TestGetRoleAssignments_ProjectIDDropsOtherProjects(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		body := `{
+			"role_assignments": [
+				{
+					"scope": {"project": {"id": "proj-1", "name": "my-project"}},
+					"user": {"id": "u1"},
+					"role": {"id": "role-admin", "name": "admin"}
+				},
+				{
+					"scope": {"project": {"id": "other-proj", "name": "other-project"}},
+					"user": {"id": "u1"},
+					"role": {"id": "role-admin", "name": "admin"}
+				},
+				{
+					"scope": {"system": {"all": true}},
+					"user": {"id": "u1"},
+					"role": {"id": "role-3", "name": "role3"}
+				}
+			]
+		}`
+		_, _ = w.Write([]byte(body))
+	}))
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
+	ras, err := getRoleAssignments(t.Context(), ts.Client(), ts.URL, "tok", getRoleAssignmentsOptions{userID: "u1", projectID: "proj-1"}, logger)
 	if err != nil {
-		t.Fatalf("failed to unescape query: %v", err)
+		t.Fatalf("getRoleAssignments error: %v", err)
 	}
-	if !strings.Contains(unescaped, "scope.project.id=proj-1") {
-		t.Fatalf("expected scope.project.id=proj-1 in a group.id lookup too, got query: %q", gotQuery)
+
+	if len(ras) != 2 {
+		t.Fatalf("expected 2 rows (proj-1 + system, other-proj dropped), got %d: %+v", len(ras), ras)
 	}
-	if !strings.Contains(unescaped, "group.id=g1") {
-		t.Fatalf("expected group.id=g1 in request, got query: %q", gotQuery)
+	for _, ra := range ras {
+		if ra.Scope.Project != nil && ra.Scope.Project.ID != "proj-1" {
+			t.Errorf("unexpected project row leaked through: %+v", ra)
+		}
+	}
+}
+
+func TestGetRoleAssignments_NoFilteringWithoutProjectID(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.RawQuery, "scope.project.id=") {
+			t.Errorf("did not expect scope.project.id in request: %q", r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(allRoleAssignmentsBody))
+	}))
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
+	ras, err := getRoleAssignments(t.Context(), ts.Client(), ts.URL, "tok", getRoleAssignmentsOptions{userID: "u1"}, logger)
+	if err != nil {
+		t.Fatalf("getRoleAssignments error: %v", err)
+	}
+	if len(ras) != 3 {
+		t.Fatalf("expected all 3 rows unfiltered, got %d: %+v", len(ras), ras)
 	}
 }
 
@@ -122,14 +180,14 @@ func multiScopeHandler(t *testing.T, projectDomainName string) http.HandlerFunc 
 						"role": {"id": "role-admin", "name": "admin"}
 					},
 					{
-						"scope": {"domain": {"id": "dom-2", "name": "Customer_Domain"}, "OS-INHERIT:inherited_to": "projects"},
+						"scope": {"domain": {"id": "dom-2", "name": "Second_Domain"}, "OS-INHERIT:inherited_to": "projects"},
 						"user": {"id": "u1"},
-						"role": {"id": "role-cda", "name": "customer_domain_admin"}
+						"role": {"id": "role-2", "name": "role2"}
 					},
 					{
 						"scope": {"system": {"all": true}},
 						"user": {"id": "u1"},
-						"role": {"id": "role-pa", "name": "platform_admin"}
+						"role": {"id": "role-3", "name": "role3"}
 					}
 				]
 			}`
@@ -155,9 +213,9 @@ func TestGetAllGroupsForUser_MultiScopeDispatch(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"cust-cust-domain-my-project-admin":          true, // 4-part project group
-		"cust-customer-domain-customer_domain_admin": true, // 3-part domain group
-		"cust-platform_admin":                        true, // 2-part system group
+		"cust-cust-domain-my-project-admin": true, // 4-part project group
+		"cust-second-domain-role2":          true, // 3-part domain group
+		"cust-role3":                        true, // 2-part system group
 	}
 	if len(groups) != len(want) {
 		t.Fatalf("unexpected groups: got %v, want keys %v", groups, want)
@@ -216,8 +274,30 @@ func TestGetAllGroupsForUser_ProjectOnlyUsesRowDomainNotConfig(t *testing.T) {
 	}
 }
 
-func TestGetAllGroupsForUser_ProjectIDNarrowsProjectScopeOnly(t *testing.T) {
-	var gotUserRoleAssignmentsQuery string
+// allRoleAssignments is the fixed set of role assignments a fake Keystone
+// in these tests holds for user u1: one project-scoped, one domain-scoped,
+// one system-scoped.
+const allRoleAssignmentsBody = `{
+	"role_assignments": [
+		{
+			"scope": {"project": {"id": "proj-1", "name": "my-project", "domain": {"id": "dom-1", "name": "cust-domain"}}},
+			"user": {"id": "u1"},
+			"role": {"id": "role-admin", "name": "admin"}
+		},
+		{
+			"scope": {"domain": {"id": "dom-2", "name": "Second_Domain"}},
+			"user": {"id": "u1"},
+			"role": {"id": "role-2", "name": "role2"}
+		},
+		{
+			"scope": {"system": {"all": true}},
+			"user": {"id": "u1"},
+			"role": {"id": "role-3", "name": "role3"}
+		}
+	]
+}`
+
+func TestGetAllGroupsForUser_ProjectIDStillIncludesDomainAndSystemRoles(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v3/groups"):
@@ -229,30 +309,65 @@ func TestGetAllGroupsForUser_ProjectIDNarrowsProjectScopeOnly(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(groupsResponse{})
 			return
 		case strings.HasSuffix(r.URL.Path, "/v3/role_assignments"):
-			if strings.Contains(r.URL.RawQuery, "user.id=") {
-				gotUserRoleAssignmentsQuery = r.URL.RawQuery
-			}
-			// Simulates Keystone already applying scope.project.id=proj-1.
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(allRoleAssignmentsBody))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
+	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
+
+	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "login-domain", "proj-1", info, logger)
+	if err != nil {
+		t.Fatalf("getAllGroupsForUser error: %v", err)
+	}
+
+	want := map[string]bool{
+		"cust-cust-domain-my-project-admin": true, // project-scoped, matches the requested project
+		"cust-second-domain-role2":          true, // domain-scoped, must still appear
+		"cust-role3":                        true, // system-scoped, must still appear
+	}
+	if len(groups) != len(want) {
+		t.Fatalf("unexpected groups: got %v, want keys %v", groups, want)
+	}
+	for _, g := range groups {
+		if !want[g] {
+			t.Errorf("unexpected group %q in result %v", g, groups)
+		}
+	}
+}
+
+func TestGetAllGroupsForUser_ProjectIDExcludesOtherProjects(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v3/groups"):
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(groupsResponse{})
+			return
+		case strings.Contains(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(groupsResponse{})
+			return
+		case strings.HasSuffix(r.URL.Path, "/v3/role_assignments"):
+			w.WriteHeader(http.StatusOK)
 			body := `{
 				"role_assignments": [
 					{
-						"scope": {"project": {"id": "proj-1", "name": "my-project", "domain": {"id": "dom-1", "name": "cust-domain"}}},
+						"scope": {"project": {"id": "other-proj", "name": "other-project", "domain": {"id": "dom-1", "name": "cust-domain"}}},
 						"user": {"id": "u1"},
 						"role": {"id": "role-admin", "name": "admin"}
 					},
 					{
-						"scope": {"domain": {"id": "dom-2", "name": "Customer_Domain"}},
-						"user": {"id": "u1"},
-						"role": {"id": "role-cda", "name": "customer_domain_admin"}
-					},
-					{
 						"scope": {"system": {"all": true}},
 						"user": {"id": "u1"},
-						"role": {"id": "role-pa", "name": "platform_admin"}
+						"role": {"id": "role-3", "name": "role3"}
 					}
 				]
 			}`
-			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(body))
 			return
 		default:
@@ -269,21 +384,11 @@ func TestGetAllGroupsForUser_ProjectIDNarrowsProjectScopeOnly(t *testing.T) {
 		t.Fatalf("getAllGroupsForUser error: %v", err)
 	}
 
-	unescaped, err := url.QueryUnescape(gotUserRoleAssignmentsQuery)
-	if err != nil {
-		t.Fatalf("failed to unescape query: %v", err)
-	}
-	if !strings.Contains(unescaped, "scope.project.id=proj-1") {
-		t.Fatalf("expected the user role_assignments query to include scope.project.id=proj-1, got: %q", gotUserRoleAssignmentsQuery)
-	}
-
 	want := map[string]bool{
-		"cust-cust-domain-my-project-admin":          true, // project-scoped, matches the requested project
-		"cust-customer-domain-customer_domain_admin": true, // domain-scoped, always included regardless of project_id
-		"cust-platform_admin":                        true, // system-scoped, always included regardless of project_id
+		"cust-role3": true, // system-scoped, must still appear
 	}
 	if len(groups) != len(want) {
-		t.Fatalf("unexpected groups: got %v, want keys %v", groups, want)
+		t.Fatalf("unexpected groups: got %v, want keys %v (other-project's role must be excluded)", groups, want)
 	}
 	for _, g := range groups {
 		if !want[g] {
@@ -303,10 +408,10 @@ func TestGenerateGroupName(t *testing.T) {
 }
 
 func TestGenerateDomainGroupName(t *testing.T) {
-	domain := namedIdentifier{Name: "Customer_Domain"}
-	role := namedIdentifier{Name: "customer_domain_admin"}
+	domain := namedIdentifier{Name: "Second_Domain"}
+	role := namedIdentifier{Name: "role2"}
 	got := generateDomainGroupName(domain, role, "cust")
-	want := "cust-customer-domain-customer_domain_admin"
+	want := "cust-second-domain-role2"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -396,7 +501,7 @@ func TestAuthenticate_FallsBackToDefaultDomainWhenAbsent(t *testing.T) {
 		t.Fatalf("expected fallback to %q, got domain=%+v", defaultUserDomainID, got.Auth.Identity.Password.User.Domain)
 	}
 	if got.Auth.Identity.Password.User.Domain.Name == "admin-account-domain" {
-		t.Fatalf("Config.Domain (admin account's domain) must never be used for end-user login, got domain=%+v", got.Auth.Identity.Password.User.Domain)
+		t.Fatalf("Config.Domain must never be used for end-user login, got domain=%+v", got.Auth.Identity.Password.User.Domain)
 	}
 }
 
