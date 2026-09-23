@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 
+	"github.com/dexidp/dex/connector/mock"
 	"github.com/dexidp/dex/storage"
 )
 
@@ -418,6 +419,80 @@ func TestHandlePassword(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandlePasswordGrant_DomainAndProjectID(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	httpServer, s := newTestServer(ctx, t, func(c *Config) {
+		c.DefaultPasswordConnector = "test"
+		c.PasswordConnector = "test"
+		c.Now = time.Now
+	})
+	defer httpServer.Close()
+
+	mockConnectorDataTestStorage(t, s.storage)
+
+	conn, err := s.getConnector(ctx, "test")
+	require.NoError(t, err)
+	pwConn, ok := conn.Connector.(*mock.PasswordConnector)
+	require.True(t, ok, "expected *mock.PasswordConnector, got %T", conn.Connector)
+
+	makeReq := func(v url.Values) *httptest.ResponseRecorder {
+		u, err := url.Parse(s.issuerURL.String())
+		require.NoError(t, err)
+		u.Path = path.Join(u.Path, "/token")
+
+		req, _ := http.NewRequest("POST", u.String(), bytes.NewBufferString(v.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
+		req.SetBasicAuth("test", "barfoo")
+
+		rr := httptest.NewRecorder()
+		s.ServeHTTP(rr, req)
+		return rr
+	}
+
+	t.Run("form fields reach the connector", func(t *testing.T) {
+		v := url.Values{}
+		v.Add("scope", "openid email")
+		v.Add("grant_type", "password")
+		v.Add("username", "test")
+		v.Add("password", "test")
+		v.Add("domain_id", "dom-1")
+		v.Add("project_id", "proj-1")
+
+		rr := makeReq(v)
+		require.Equal(t, 200, rr.Code)
+		require.Equal(t, "dom-1", pwConn.LastScopes.DomainID)
+		require.Equal(t, "proj-1", pwConn.LastScopes.ProjectID)
+	})
+
+	t.Run("scope tokens reach the connector", func(t *testing.T) {
+		v := url.Values{}
+		v.Add("scope", "openid email domain:dom-2 project:proj-2")
+		v.Add("grant_type", "password")
+		v.Add("username", "test")
+		v.Add("password", "test")
+
+		rr := makeReq(v)
+		require.Equal(t, 200, rr.Code)
+		require.Equal(t, "dom-2", pwConn.LastScopes.DomainID)
+		require.Equal(t, "proj-2", pwConn.LastScopes.ProjectID)
+	})
+
+	t.Run("absent when caller sends neither", func(t *testing.T) {
+		v := url.Values{}
+		v.Add("scope", "openid email")
+		v.Add("grant_type", "password")
+		v.Add("username", "test")
+		v.Add("password", "test")
+
+		rr := makeReq(v)
+		require.Equal(t, 200, rr.Code)
+		require.Equal(t, "", pwConn.LastScopes.DomainID)
+		require.Equal(t, "", pwConn.LastScopes.ProjectID)
+	})
 }
 
 func TestHandlePasswordLoginWithSkipApproval(t *testing.T) {
