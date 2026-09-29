@@ -104,8 +104,13 @@ type PasswordConnector struct {
 	password string
 	logger   *slog.Logger
 
-	// LastScopes is the Scopes passed to the most recent Login call.
+	// LastScopes is the Scopes passed to the most recent Login/Refresh call.
 	LastScopes connector.Scopes
+
+	// GroupsForScopes, if set, computes the Groups an identity gets back
+	// from Login/Refresh, given the Scopes that call received — lets tests
+	// simulate scope-dependent group narrowing (e.g. by ProjectID).
+	GroupsForScopes func(connector.Scopes) []string
 }
 
 func (p *PasswordConnector) Close() error { return nil }
@@ -113,11 +118,16 @@ func (p *PasswordConnector) Close() error { return nil }
 func (p *PasswordConnector) Login(ctx context.Context, s connector.Scopes, username, password string) (identity connector.Identity, validPassword bool, err error) {
 	p.LastScopes = s
 	if username == p.username && password == p.password {
+		var groups []string
+		if p.GroupsForScopes != nil {
+			groups = p.GroupsForScopes(s)
+		}
 		return connector.Identity{
 			UserID:        "0-385-28089-0",
 			Username:      "Kilgore Trout",
 			Email:         "kilgore@kilgore.trout",
 			EmailVerified: true,
+			Groups:        groups,
 			ConnectorData: []byte(`{"test": "true"}`),
 		}, true, nil
 	}
@@ -126,6 +136,10 @@ func (p *PasswordConnector) Login(ctx context.Context, s connector.Scopes, usern
 
 func (p *PasswordConnector) Prompt() string { return "" }
 
-func (p *PasswordConnector) Refresh(_ context.Context, _ connector.Scopes, identity connector.Identity) (connector.Identity, error) {
+func (p *PasswordConnector) Refresh(_ context.Context, s connector.Scopes, identity connector.Identity) (connector.Identity, error) {
+	p.LastScopes = s
+	if p.GroupsForScopes != nil {
+		identity.Groups = p.GroupsForScopes(s)
+	}
 	return identity, nil
 }

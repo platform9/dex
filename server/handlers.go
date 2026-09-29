@@ -1268,6 +1268,18 @@ func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request, cli
 		}
 		return false
 	}()
+	// Persist domain_id/project_id as domain:<id>/project:<id> scope
+	// strings so a later refresh_token grant restores them via parseScopes
+	// — refresh.Scopes is the only part of this request that survives to
+	// the refresh flow (see getRefreshScopes/handleRefreshToken).
+	refreshScopes := scopes
+	if loginScopes.DomainID != "" {
+		refreshScopes = append(refreshScopes, scopeDomainPrefix+loginScopes.DomainID)
+	}
+	if loginScopes.ProjectID != "" {
+		refreshScopes = append(refreshScopes, scopeProjectPrefix+loginScopes.ProjectID)
+	}
+
 	var refreshToken string
 	if reqRefresh {
 		refresh := storage.RefreshToken{
@@ -1275,7 +1287,7 @@ func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request, cli
 			Token:       storage.NewID(),
 			ClientID:    client.ID,
 			ConnectorID: connID,
-			Scopes:      scopes,
+			Scopes:      refreshScopes,
 			Claims:      claims,
 			Nonce:       nonce,
 			// ConnectorData: authCode.ConnectorData,
