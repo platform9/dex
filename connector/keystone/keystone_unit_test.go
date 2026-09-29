@@ -299,6 +299,9 @@ const allRoleAssignmentsBody = `{
 func TestGetAllGroupsForUser_ProjectIDStillIncludesDomainAndSystemRoles(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.Contains(r.URL.Path, "/v3/projects/"):
+			w.WriteHeader(http.StatusOK)
+			return
 		case strings.HasSuffix(r.URL.Path, "/v3/groups"):
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(groupsResponse{})
@@ -343,6 +346,9 @@ func TestGetAllGroupsForUser_ProjectIDStillIncludesDomainAndSystemRoles(t *testi
 func TestGetAllGroupsForUser_ProjectIDExcludesOtherProjects(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.Contains(r.URL.Path, "/v3/projects/"):
+			w.WriteHeader(http.StatusOK)
+			return
 		case strings.HasSuffix(r.URL.Path, "/v3/groups"):
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(groupsResponse{})
@@ -519,5 +525,96 @@ func TestGetAdminTokenUnscoped_UsesConfiguredAdminDomain(t *testing.T) {
 	}
 	if got.Auth.Identity.Password.User.Domain.Name == "Default" {
 		t.Fatalf("admin domain must not be hardcoded to \"Default\", got domain=%+v", got.Auth.Identity.Password.User.Domain)
+	}
+}
+
+func TestProjectExists(t *testing.T) {
+	var gotPath string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if strings.HasSuffix(r.URL.Path, "/v3/projects/proj-1") {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	ok, err := projectExists(t.Context(), ts.Client(), ts.URL, "tok", "proj-1")
+	if err != nil {
+		t.Fatalf("projectExists error: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected project to exist")
+	}
+	if !strings.HasSuffix(gotPath, "/v3/projects/proj-1") {
+		t.Fatalf("expected request to /v3/projects/proj-1, got path: %q", gotPath)
+	}
+
+	ok, err = projectExists(t.Context(), ts.Client(), ts.URL, "tok", "bogus-id")
+	if err != nil {
+		t.Fatalf("projectExists error: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected project to not exist")
+	}
+}
+
+func TestGetAllGroupsForUser_FailsWhenProjectIDDoesNotExist(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/v3/projects/bogus-id") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		t.Fatalf("unexpected request to %s — role_assignments/groups should not be fetched when the project doesn't exist", r.URL.Path)
+	}))
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
+	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
+
+	_, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "bogus-id", info, logger)
+	if err == nil {
+		t.Fatalf("expected an error for a nonexistent project_id, got nil")
+	}
+	if !strings.Contains(err.Error(), "bogus-id") {
+		t.Fatalf("expected error to mention the bad project_id, got: %v", err)
+	}
+}
+
+func TestGetAllGroupsForUser_ProjectIDCheckSkippedWhenAbsent(t *testing.T) {
+	var sawProjectsCall bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/v3/projects/"):
+			sawProjectsCall = true
+			w.WriteHeader(http.StatusOK)
+			return
+		case strings.HasSuffix(r.URL.Path, "/v3/groups"):
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(groupsResponse{})
+			return
+		case strings.Contains(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(groupsResponse{})
+			return
+		case strings.HasSuffix(r.URL.Path, "/v3/role_assignments"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"role_assignments": []}`))
+			return
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
+	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
+
+	if _, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "", info, logger); err != nil {
+		t.Fatalf("getAllGroupsForUser error: %v", err)
+	}
+	if sawProjectsCall {
+		t.Fatalf("did not expect a /v3/projects call when project_id is absent")
 	}
 }

@@ -429,8 +429,49 @@ func getUser(ctx context.Context, client *http.Client, baseURL, userID, token st
 	return &user, nil
 }
 
-// getAllGroupsForUser returns all groups for a user (local groups + SSO groups + role groups)
+// projectExists reports whether projectID names a real Keystone project.
+func projectExists(ctx context.Context, client *http.Client, baseURL, token, projectID string) (bool, error) {
+	projectURL, err := url.JoinPath(baseURL, "v3", "projects", projectID)
+	if err != nil {
+		return false, err
+	}
+	req, err := http.NewRequest(http.MethodGet, projectURL, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("X-Auth-Token", token)
+	req = req.WithContext(ctx)
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("keystone: unexpected status %d checking project %q", resp.StatusCode, projectID)
+	}
+}
+
+// getAllGroupsForUser returns all groups for a user (local groups + SSO groups + role groups).
+// If projectID is set but doesn't name a real Keystone project (e.g. a
+// typo), returns an error instead of silently succeeding with only
+// domain-/system-scoped groups.
 func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, token, customerName, projectID string, tokenInfo *tokenInfo, logger *slog.Logger) ([]string, error) {
+	if projectID != "" {
+		ok, err := projectExists(ctx, client, baseURL, token, projectID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("keystone: project %q does not exist", projectID)
+		}
+	}
+
 	var userGroups []string
 	var userGroupIDs []string
 
