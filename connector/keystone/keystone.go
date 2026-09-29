@@ -78,7 +78,7 @@ func (p *conn) Login(ctx context.Context, scopes connector.Scopes, username, pas
 			p.Logger.Error("failed to obtain admin token", "error", err)
 			return identity, false, err
 		}
-		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, adminToken, p.CustomerName, p.Domain.Name, scopes.ProjectID, tokenInfo, p.Logger)
+		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, adminToken, p.CustomerName, scopes.ProjectID, tokenInfo, p.Logger)
 		if err != nil {
 			return connector.Identity{}, false, err
 		}
@@ -148,7 +148,7 @@ func (p *conn) Refresh(
 
 	if scopes.Groups {
 		var err error
-		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, token, p.CustomerName, p.Domain.Name, scopes.ProjectID, tokenInfo, p.Logger)
+		identity.Groups, err = getAllGroupsForUser(ctx, p.client, p.Host, token, p.CustomerName, scopes.ProjectID, tokenInfo, p.Logger)
 		if err != nil {
 			return identity, err
 		}
@@ -430,7 +430,7 @@ func getUser(ctx context.Context, client *http.Client, baseURL, userID, token st
 }
 
 // getAllGroupsForUser returns all groups for a user (local groups + SSO groups + role groups)
-func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, token, customerName, domainID, projectID string, tokenInfo *tokenInfo, logger *slog.Logger) ([]string, error) {
+func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, token, customerName, projectID string, tokenInfo *tokenInfo, logger *slog.Logger) ([]string, error) {
 	var userGroups []string
 	var userGroupIDs []string
 

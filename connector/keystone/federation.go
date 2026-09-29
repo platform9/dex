@@ -122,7 +122,7 @@ func (c *FederationConnector) HandleCallback(scopes connector.Scopes, r *http.Re
 			c.logger.Error("failed to obtain admin token", "error", err)
 			return identity, err
 		}
-		identity.Groups, err = getAllGroupsForUser(r.Context(), c.client, c.cfg.Host, adminToken, c.cfg.CustomerName, c.cfg.Domain, scopes.ProjectID, tokenInfo, c.logger)
+		identity.Groups, err = getAllGroupsForUser(r.Context(), c.client, c.cfg.Host, adminToken, c.cfg.CustomerName, scopes.ProjectID, tokenInfo, c.logger)
 		if err != nil {
 			return connector.Identity{}, err
 		}
@@ -272,7 +272,7 @@ func (c *FederationConnector) Refresh(
 	if scopes.Groups {
 		c.logger.Info("refreshing groups", "userID", identity.UserID)
 		var err error
-		identity.Groups, err = getAllGroupsForUser(ctx, c.client, c.cfg.Host, adminToken, c.cfg.CustomerName, c.cfg.Domain, scopes.ProjectID, tokenInfo, c.logger)
+		identity.Groups, err = getAllGroupsForUser(ctx, c.client, c.cfg.Host, adminToken, c.cfg.CustomerName, scopes.ProjectID, tokenInfo, c.logger)
 		if err != nil {
 			c.logger.Error("failed to get groups", "userID", identity.UserID, "error", err)
 			return identity, err

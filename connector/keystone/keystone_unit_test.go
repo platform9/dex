@@ -207,7 +207,7 @@ func TestGetAllGroupsForUser_MultiScopeDispatch(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
 	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
 
-	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "login-domain", "", info, logger)
+	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "", info, logger)
 	if err != nil {
 		t.Fatalf("getAllGroupsForUser error: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestGetAllGroupsForUser_MultiScopeDispatch(t *testing.T) {
 	}
 }
 
-func TestGetAllGroupsForUser_ProjectOnlyUsesRowDomainNotConfig(t *testing.T) {
+func TestGetAllGroupsForUser_ProjectGroupUsesRowDomain(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/v3/groups"):
@@ -260,10 +260,9 @@ func TestGetAllGroupsForUser_ProjectOnlyUsesRowDomainNotConfig(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
 	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
 
-	// Pass a DIFFERENT domainID (the connector's configured login domain)
-	// than the row's own scope.project.domain.name, to prove the row's
-	// data wins, not the config value.
-	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "login-domain", "", info, logger)
+	// Project group names use the role assignment's own
+	// scope.project.domain.name, not any connector-level config.
+	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "", info, logger)
 	if err != nil {
 		t.Fatalf("getAllGroupsForUser error: %v", err)
 	}
@@ -321,7 +320,7 @@ func TestGetAllGroupsForUser_ProjectIDStillIncludesDomainAndSystemRoles(t *testi
 	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
 	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
 
-	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "login-domain", "proj-1", info, logger)
+	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "proj-1", info, logger)
 	if err != nil {
 		t.Fatalf("getAllGroupsForUser error: %v", err)
 	}
@@ -379,7 +378,7 @@ func TestGetAllGroupsForUser_ProjectIDExcludesOtherProjects(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
 	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
 
-	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "login-domain", "proj-1", info, logger)
+	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "proj-1", info, logger)
 	if err != nil {
 		t.Fatalf("getAllGroupsForUser error: %v", err)
 	}
