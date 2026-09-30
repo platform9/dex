@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,8 +21,24 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
 
+	"github.com/dexidp/dex/connector"
+	"github.com/dexidp/dex/connector/mock"
 	"github.com/dexidp/dex/storage"
 )
+
+// decodeIDTokenClaims extracts a JWT's payload claims without verifying its
+// signature — sufficient for tests asserting what a handler put in the
+// token, since the handler's own signing key isn't easily reachable here.
+func decodeIDTokenClaims(t *testing.T, idToken string) map[string]interface{} {
+	t.Helper()
+	parts := strings.Split(idToken, ".")
+	require.Len(t, parts, 3, "expected a JWT with 3 dot-separated parts")
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+	var claims map[string]interface{}
+	require.NoError(t, json.Unmarshal(payload, &claims))
+	return claims
+}
 
 func TestHandleHealth(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -418,6 +435,186 @@ func TestHandlePassword(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandlePasswordGrant_DomainAndProjectID(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	httpServer, s := newTestServer(ctx, t, func(c *Config) {
+		c.DefaultPasswordConnector = "test"
+		c.PasswordConnector = "test"
+		c.Now = time.Now
+	})
+	defer httpServer.Close()
+
+	mockConnectorDataTestStorage(t, s.storage)
+
+	conn, err := s.getConnector(ctx, "test")
+	require.NoError(t, err)
+	pwConn, ok := conn.Connector.(*mock.PasswordConnector)
+	require.True(t, ok, "expected *mock.PasswordConnector, got %T", conn.Connector)
+
+	makeReq := func(v url.Values) *httptest.ResponseRecorder {
+		u, err := url.Parse(s.issuerURL.String())
+		require.NoError(t, err)
+		u.Path = path.Join(u.Path, "/token")
+
+		req, _ := http.NewRequest("POST", u.String(), bytes.NewBufferString(v.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
+		req.SetBasicAuth("test", "barfoo")
+
+		rr := httptest.NewRecorder()
+		s.ServeHTTP(rr, req)
+		return rr
+	}
+
+	t.Run("form fields reach the connector", func(t *testing.T) {
+		v := url.Values{}
+		v.Add("scope", "openid email")
+		v.Add("grant_type", "password")
+		v.Add("username", "test")
+		v.Add("password", "test")
+		v.Add("domain_id", "dom-1")
+		v.Add("project_id", "proj-1")
+
+		rr := makeReq(v)
+		require.Equal(t, 200, rr.Code)
+		require.Equal(t, "dom-1", pwConn.LastScopes.DomainID)
+		require.Equal(t, "proj-1", pwConn.LastScopes.ProjectID)
+	})
+
+	t.Run("scope tokens reach the connector", func(t *testing.T) {
+		v := url.Values{}
+		v.Add("scope", "openid email domain:dom-2 project:proj-2")
+		v.Add("grant_type", "password")
+		v.Add("username", "test")
+		v.Add("password", "test")
+
+		rr := makeReq(v)
+		require.Equal(t, 200, rr.Code)
+		require.Equal(t, "dom-2", pwConn.LastScopes.DomainID)
+		require.Equal(t, "proj-2", pwConn.LastScopes.ProjectID)
+	})
+
+	t.Run("absent when caller sends neither", func(t *testing.T) {
+		v := url.Values{}
+		v.Add("scope", "openid email")
+		v.Add("grant_type", "password")
+		v.Add("username", "test")
+		v.Add("password", "test")
+
+		rr := makeReq(v)
+		require.Equal(t, 200, rr.Code)
+		require.Equal(t, "", pwConn.LastScopes.DomainID)
+		require.Equal(t, "", pwConn.LastScopes.ProjectID)
+	})
+}
+
+// TestHandlePasswordGrant_ProjectIDSurvivesRefresh is a regression test:
+// project_id/domain_id were applied on the initial login but silently
+// dropped from the stored refresh token, so every subsequent
+// grant_type=refresh_token call reverted to unscoped groups. Checks both
+// that the connector is called with the right Scopes AND that the
+// resulting ID token's groups claim actually reflects it, across two
+// consecutive refreshes (not just the first).
+func TestHandlePasswordGrant_ProjectIDSurvivesRefresh(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	httpServer, s := newTestServer(ctx, t, func(c *Config) {
+		c.DefaultPasswordConnector = "test"
+		c.PasswordConnector = "test"
+		c.Now = time.Now
+		c.RefreshTokenPolicy = &RefreshTokenPolicy{rotateRefreshTokens: true}
+	})
+	defer httpServer.Close()
+
+	mockConnectorDataTestStorage(t, s.storage)
+
+	conn, err := s.getConnector(ctx, "test")
+	require.NoError(t, err)
+	pwConn, ok := conn.Connector.(*mock.PasswordConnector)
+	require.True(t, ok, "expected *mock.PasswordConnector, got %T", conn.Connector)
+
+	// Simulates the real Keystone connector: groups narrow to the active
+	// project, independent of which grant (login vs. refresh) asked.
+	pwConn.GroupsForScopes = func(s connector.Scopes) []string {
+		if s.ProjectID == "" {
+			return []string{"all-projects-group"}
+		}
+		return []string{"cust-" + s.ProjectID + "-admin"}
+	}
+
+	tokenURL, err := url.Parse(s.issuerURL.String())
+	require.NoError(t, err)
+	tokenURL.Path = path.Join(tokenURL.Path, "/token")
+
+	makeReq := func(v url.Values) *httptest.ResponseRecorder {
+		req, _ := http.NewRequest("POST", tokenURL.String(), bytes.NewBufferString(v.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded; param=value")
+		req.SetBasicAuth("test", "barfoo")
+
+		rr := httptest.NewRecorder()
+		s.ServeHTTP(rr, req)
+		return rr
+	}
+
+	requireProjectScopedIDToken := func(rr *httptest.ResponseRecorder) string {
+		var tok struct {
+			IDToken      string `json:"id_token"`
+			RefreshToken string `json:"refresh_token"`
+		}
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &tok))
+		require.NotEmpty(t, tok.RefreshToken)
+
+		claims := decodeIDTokenClaims(t, tok.IDToken)
+		groups, _ := claims["groups"].([]interface{})
+		require.Len(t, groups, 1)
+		require.Equal(t, "cust-proj-1-admin", groups[0])
+
+		return tok.RefreshToken
+	}
+
+	// Initial login, requesting a refresh token, scoped to a project.
+	loginReq := url.Values{}
+	loginReq.Add("scope", "openid groups email offline_access")
+	loginReq.Add("grant_type", "password")
+	loginReq.Add("username", "test")
+	loginReq.Add("password", "test")
+	loginReq.Add("domain_id", "dom-1")
+	loginReq.Add("project_id", "proj-1")
+
+	rr := makeReq(loginReq)
+	require.Equal(t, 200, rr.Code)
+	require.Equal(t, "dom-1", pwConn.LastScopes.DomainID)
+	require.Equal(t, "proj-1", pwConn.LastScopes.ProjectID)
+	refreshToken := requireProjectScopedIDToken(rr)
+
+	// First refresh: project_id must survive even though the client sends
+	// nothing but the refresh token itself.
+	pwConn.LastScopes = connector.Scopes{}
+	refreshReq := url.Values{}
+	refreshReq.Add("grant_type", "refresh_token")
+	refreshReq.Add("refresh_token", refreshToken)
+
+	rr = makeReq(refreshReq)
+	require.Equal(t, 200, rr.Code)
+	require.Equal(t, "proj-1", pwConn.LastScopes.ProjectID, "project_id must survive into the first refresh")
+	refreshToken = requireProjectScopedIDToken(rr)
+
+	// Second refresh (refresh of a refresh, with the rotated token): still
+	// scoped — old.Scopes is never touched by refresh handling, so this
+	// isn't a one-time carryover from login.
+	pwConn.LastScopes = connector.Scopes{}
+	refreshReq2 := url.Values{}
+	refreshReq2.Add("grant_type", "refresh_token")
+	refreshReq2.Add("refresh_token", refreshToken)
+
+	rr = makeReq(refreshReq2)
+	require.Equal(t, 200, rr.Code)
+	require.Equal(t, "proj-1", pwConn.LastScopes.ProjectID, "project_id must survive into the second refresh")
+	requireProjectScopedIDToken(rr)
 }
 
 func TestHandlePasswordLoginWithSkipApproval(t *testing.T) {

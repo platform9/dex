@@ -48,6 +48,24 @@ func TestGetSubject(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestParseScopes(t *testing.T) {
+	s := parseScopes([]string{"openid", "offline_access", "groups", "email"})
+	require.True(t, s.OfflineAccess)
+	require.True(t, s.Groups)
+	require.Equal(t, "", s.DomainID)
+	require.Equal(t, "", s.ProjectID)
+
+	s = parseScopes([]string{"openid", "groups", "domain:dom-1", "project:proj-1"})
+	require.True(t, s.Groups)
+	require.Equal(t, "dom-1", s.DomainID)
+	require.Equal(t, "proj-1", s.ProjectID)
+
+	// Absent when not requested, unaffected by unrelated scopes.
+	s = parseScopes([]string{"openid", "email", "profile"})
+	require.Equal(t, "", s.DomainID)
+	require.Equal(t, "", s.ProjectID)
+}
+
 func TestParseAuthorizationRequest(t *testing.T) {
 	tests := []struct {
 		name                   string
@@ -318,6 +336,39 @@ func TestParseAuthorizationRequest(t *testing.T) {
 				"scope":                 "openid email profile",
 			},
 			expectedError: &redirectedAuthErr{Type: errInvalidRequest},
+		},
+		{
+			name: "domain and project scope tokens are accepted",
+			clients: []storage.Client{
+				{
+					ID:           "bar",
+					RedirectURIs: []string{"https://example.com/bar"},
+				},
+			},
+			supportedResponseTypes: []string{"code"},
+			queryParams: map[string]string{
+				"client_id":     "bar",
+				"redirect_uri":  "https://example.com/bar",
+				"response_type": "code",
+				"scope":         "openid email profile groups domain:dom-1 project:proj-1",
+			},
+		},
+		{
+			name: "genuinely unrecognized scope is still rejected",
+			clients: []storage.Client{
+				{
+					ID:           "bar",
+					RedirectURIs: []string{"https://example.com/bar"},
+				},
+			},
+			supportedResponseTypes: []string{"code"},
+			queryParams: map[string]string{
+				"client_id":     "bar",
+				"redirect_uri":  "https://example.com/bar",
+				"response_type": "code",
+				"scope":         "openid email profile bogus_scope",
+			},
+			expectedError: &redirectedAuthErr{Type: errInvalidScope},
 		},
 	}
 

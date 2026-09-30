@@ -31,8 +31,8 @@ func NewCallbackConnector(logger *slog.Logger) connector.Connector {
 var (
 	_ connector.CallbackConnector = &Callback{}
 
-	_ connector.PasswordConnector = passwordConnector{}
-	_ connector.RefreshConnector  = passwordConnector{}
+	_ connector.PasswordConnector = &PasswordConnector{}
+	_ connector.RefreshConnector  = &PasswordConnector{}
 )
 
 // Callback is a connector that requires no user interaction and always returns the same identity.
@@ -94,32 +94,52 @@ func (c *PasswordConfig) Open(id string, logger *slog.Logger) (connector.Connect
 	if c.Password == "" {
 		return nil, errors.New("no password supplied")
 	}
-	return &passwordConnector{c.Username, c.Password, logger}, nil
+	return &PasswordConnector{username: c.Username, password: c.Password, logger: logger}, nil
 }
 
-type passwordConnector struct {
+// PasswordConnector is the connector opened by PasswordConfig. Exported so
+// other packages' tests can type-assert on it and inspect LastScopes.
+type PasswordConnector struct {
 	username string
 	password string
 	logger   *slog.Logger
+
+	// LastScopes is the Scopes passed to the most recent Login/Refresh call.
+	LastScopes connector.Scopes
+
+	// GroupsForScopes, if set, computes the Groups an identity gets back
+	// from Login/Refresh, given the Scopes that call received — lets tests
+	// simulate scope-dependent group narrowing (e.g. by ProjectID).
+	GroupsForScopes func(connector.Scopes) []string
 }
 
-func (p passwordConnector) Close() error { return nil }
+func (p *PasswordConnector) Close() error { return nil }
 
-func (p passwordConnector) Login(ctx context.Context, s connector.Scopes, username, password string) (identity connector.Identity, validPassword bool, err error) {
+func (p *PasswordConnector) Login(ctx context.Context, s connector.Scopes, username, password string) (identity connector.Identity, validPassword bool, err error) {
+	p.LastScopes = s
 	if username == p.username && password == p.password {
+		var groups []string
+		if p.GroupsForScopes != nil {
+			groups = p.GroupsForScopes(s)
+		}
 		return connector.Identity{
 			UserID:        "0-385-28089-0",
 			Username:      "Kilgore Trout",
 			Email:         "kilgore@kilgore.trout",
 			EmailVerified: true,
+			Groups:        groups,
 			ConnectorData: []byte(`{"test": "true"}`),
 		}, true, nil
 	}
 	return identity, false, nil
 }
 
-func (p passwordConnector) Prompt() string { return "" }
+func (p *PasswordConnector) Prompt() string { return "" }
 
-func (p passwordConnector) Refresh(_ context.Context, _ connector.Scopes, identity connector.Identity) (connector.Identity, error) {
+func (p *PasswordConnector) Refresh(_ context.Context, s connector.Scopes, identity connector.Identity) (connector.Identity, error) {
+	p.LastScopes = s
+	if p.GroupsForScopes != nil {
+		identity.Groups = p.GroupsForScopes(s)
+	}
 	return identity, nil
 }

@@ -19,6 +19,14 @@ type Scopes struct {
 
 	// The client has requested group information about the end user.
 	Groups bool
+
+	// ProjectID, if set, narrows group/role enumeration to this one
+	// project/tenant, for connectors that support it.
+	ProjectID string
+
+	// DomainID, if set, is the domain to authenticate the end user
+	// against, for connectors that support multiple domains.
+	DomainID string
 }
 
 // Identity represents the ID Token claims supported by the server.

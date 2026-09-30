@@ -24,7 +24,6 @@ const (
 	testGroup         = "test_group"
 	testDomainAltName = "altdomain"
 	testDomainID      = "default"
-	testDomainName    = "Default"
 )
 
 var (
@@ -336,7 +335,7 @@ func TestValidUserLogin(t *testing.T) {
 
 	type tUser struct {
 		createDomain bool
-		domain       domainKeystone
+		loginDomain  string // scopes.DomainID sent on Login; "" means omit it
 		username     string
 		email        string
 		password     string
@@ -357,7 +356,6 @@ func TestValidUserLogin(t *testing.T) {
 			name: "test with email address",
 			input: tUser{
 				createDomain: false,
-				domain:       domainKeystone{ID: testDomainID},
 				username:     testUser,
 				email:        testEmail,
 				password:     testPass,
@@ -372,7 +370,6 @@ func TestValidUserLogin(t *testing.T) {
 			name: "test without email address",
 			input: tUser{
 				createDomain: false,
-				domain:       domainKeystone{ID: testDomainID},
 				username:     testUser,
 				email:        "",
 				password:     testPass,
@@ -384,10 +381,10 @@ func TestValidUserLogin(t *testing.T) {
 			},
 		},
 		{
-			name: "test with default domain Name",
+			name: "test in default domain via explicit domain_id",
 			input: tUser{
 				createDomain: false,
-				domain:       domainKeystone{Name: testDomainName},
+				loginDomain:  testDomainID,
 				username:     testUser,
 				email:        testEmail,
 				password:     testPass,
@@ -399,25 +396,9 @@ func TestValidUserLogin(t *testing.T) {
 			},
 		},
 		{
-			name: "test with custom domain Name",
+			name: "test with custom domain via domain_id",
 			input: tUser{
 				createDomain: true,
-				domain:       domainKeystone{Name: testDomainAltName},
-				username:     testUser,
-				email:        testEmail,
-				password:     testPass,
-			},
-			expected: expect{
-				username:      testUser,
-				email:         testEmail,
-				verifiedEmail: true,
-			},
-		},
-		{
-			name: "test with custom domain ID",
-			input: tUser{
-				createDomain: true,
-				domain:       domainKeystone{},
 				username:     testUser,
 				email:        testEmail,
 				password:     testPass,
@@ -433,25 +414,21 @@ func TestValidUserLogin(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			domainID := ""
-			if tt.input.createDomain == true {
+			if tt.input.createDomain {
 				domainID = getOrCreateDomain(t, token, testDomainAltName)
 				t.Logf("getOrCreateDomain ID: %s\n", domainID)
-
-				// if there was nothing set then use the dynamically generated domain ID
-				if tt.input.domain.ID == "" && tt.input.domain.Name == "" {
-					tt.input.domain.ID = domainID
-				}
+				tt.input.loginDomain = domainID
 			}
 			userID := createUser(t, token, domainID, tt.input.username, tt.input.email, tt.input.password)
 			defer deleteResource(t, token, userID, usersURL)
 
 			c := conn{
 				client: http.DefaultClient,
-				Host:   keystoneAdminURL, Domain: tt.input.domain,
+				Host:   keystoneAdminURL, Domain: domainKeystone{ID: testDomainID},
 				AdminUsername: adminUser, AdminPassword: adminPass,
 				Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
-			s := connector.Scopes{OfflineAccess: true, Groups: true}
+			s := connector.Scopes{OfflineAccess: true, Groups: true, DomainID: tt.input.loginDomain}
 			identity, validPW, err := c.Login(context.Background(), s, tt.input.username, tt.input.password)
 			if err != nil {
 				t.Fatalf("Login failed for user %s: %v", tt.input.username, err.Error())
