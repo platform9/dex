@@ -511,7 +511,7 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 		switch {
 		case ra.Scope.Project != nil:
 			roleGroups = append(roleGroups, generateGroupName(*ra.Scope.Project, ra.Role, customerName))
-			roleGroups = append(roleGroups, generateProjectIDGroupName(*ra.Scope.Project, ra.Role))
+			roleGroups = append(roleGroups, generateProjectIDGroupName(*ra.Scope.Project, ra.Role, customerName))
 		case ra.Scope.Domain != nil:
 			roleGroups = append(roleGroups, generateDomainGroupName(*ra.Scope.Domain, ra.Role, customerName))
 		case ra.Scope.System != nil:
@@ -585,13 +585,18 @@ func generateGroupName(project projectScope, role namedIdentifier, customerName 
 	return customerName + "-" + domainName + "-" + projectName + "-" + roleName
 }
 
-// generateProjectIDGroupName generates a uuid based group claim.
-func generateProjectIDGroupName(project projectScope, role namedIdentifier) string {
+// generateProjectIDGroupName generates a group name based on the first 8 characters
+// of the project ID and role
+func generateProjectIDGroupName(project projectScope, role namedIdentifier, customerName string) string {
 	roleName := role.Name
 	if roleName == "_member_" {
 		roleName = "member"
 	}
-	return project.ID + "-" + roleName
+	projectID := project.ID
+	if len(projectID) > 8 {
+		projectID = projectID[:8]
+	}
+	return customerName + "-" + projectID + "-" + roleName
 }
 
 // generateDomainGroupName generates a group name for a domain-scoped role assignment
