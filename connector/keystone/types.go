@@ -95,8 +95,9 @@ type tokenResponse struct {
 
 // keystoneGroup represents a Keystone group
 type keystoneGroup struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	DomainID string `json:"domain_id"`
 }
 
 // groupsResponse represents a response containing groups

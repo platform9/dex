@@ -18,10 +18,13 @@ import (
 const (
 	invalidPass = "WRONG_PASS"
 
-	testUser          = "test_user"
-	testPass          = "test_pass"
-	testEmail         = "test@example.com"
-	testGroup         = "test_group"
+	testUser  = "test_user"
+	testPass  = "test_pass"
+	testEmail = "test@example.com"
+	testGroup = "test_group"
+	// testGroupClaim is how testGroup, created in the admin's default
+	// domain, appears in the groups claim.
+	testGroupClaim    = keystoneGroupPrefix + testDomainID + "/" + testGroup
 	testDomainAltName = "altdomain"
 	testDomainID      = "default"
 )
@@ -482,13 +485,13 @@ func TestUseRefreshToken(t *testing.T) {
 	// Custom connector may return additional role-derived groups; ensure our test group is present.
 	found := false
 	for _, g := range identityRefresh.Groups {
-		if g == testGroup {
+		if g == testGroupClaim {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected group %q to be present in %v", testGroup, identityRefresh.Groups)
+		t.Fatalf("expected group %q to be present in %v", testGroupClaim, identityRefresh.Groups)
 	}
 }
 
@@ -550,8 +553,8 @@ func TestUseRefreshTokenGroupsChanged(t *testing.T) {
 	// With custom connector, initial groups may not be empty due to role-derived groups.
 	// Assert that our test group is not present initially.
 	for _, g := range identityRefresh.Groups {
-		if g == testGroup {
-			t.Fatalf("did not expect group %q to be present initially: %v", testGroup, identityRefresh.Groups)
+		if g == testGroupClaim {
+			t.Fatalf("did not expect group %q to be present initially: %v", testGroupClaim, identityRefresh.Groups)
 		}
 	}
 
@@ -567,13 +570,13 @@ func TestUseRefreshTokenGroupsChanged(t *testing.T) {
 	// Ensure our test group is present after adding it.
 	found := false
 	for _, g := range identityRefresh.Groups {
-		if g == testGroup {
+		if g == testGroupClaim {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected group %q to be present after change in %v", testGroup, identityRefresh.Groups)
+		t.Fatalf("expected group %q to be present after change in %v", testGroupClaim, identityRefresh.Groups)
 	}
 }
 

@@ -458,6 +458,8 @@ func projectExists(ctx context.Context, client *http.Client, baseURL, token, pro
 }
 
 // getAllGroupsForUser returns all groups for a user (local groups + SSO groups + role groups).
+// Local and SSO groups are emitted as keystoneGroupClaim names so they can
+// never collide with the role groups RBAC is bound to.
 // If projectID is set but doesn't name a real Keystone project (e.g. a
 // typo), returns an error instead of silently succeeding with only
 // domain-/system-scoped groups.
@@ -484,16 +486,17 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 	// For SSO users, groups are passed down through the federation API.
 	if tokenInfo.User.OSFederation != nil {
 		for _, osGroup := range tokenInfo.User.OSFederation.Groups {
-			// If group name is empty, try to find the group by ID
-			if len(osGroup.Name) == 0 {
+			// Federated tokens may carry only the group ID; fill in the
+			// name and domain from Keystone.
+			if len(osGroup.Name) == 0 || len(osGroup.DomainID) == 0 {
 				var ok bool
 				osGroup, ok = findGroupByID(allGroups, osGroup.ID)
-				if !ok {
+				if !ok || len(osGroup.Name) == 0 || len(osGroup.DomainID) == 0 {
 					logger.Warn("SSO group not found, skipping", "groupID", osGroup.ID, "userID", tokenInfo.User.ID)
 					continue
 				}
 			}
-			userGroups = append(userGroups, osGroup.Name)
+			userGroups = append(userGroups, keystoneGroupClaim(osGroup))
 			userGroupIDs = append(userGroupIDs, osGroup.ID)
 		}
 	}
@@ -506,16 +509,16 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 	}
 
 	for _, localGroup := range localGroups {
-		// If group name is empty, try to find the group by ID
-		if len(localGroup.Name) == 0 {
+		// If group name or domain is empty, try to find the group by ID
+		if len(localGroup.Name) == 0 || len(localGroup.DomainID) == 0 {
 			var ok bool
 			localGroup, ok = findGroupByID(allGroups, localGroup.ID)
-			if !ok {
+			if !ok || len(localGroup.Name) == 0 || len(localGroup.DomainID) == 0 {
 				logger.Warn("local group not found, skipping", "groupID", localGroup.ID, "userID", tokenInfo.User.ID)
 				continue
 			}
 		}
-		userGroups = append(userGroups, localGroup.Name)
+		userGroups = append(userGroups, keystoneGroupClaim(localGroup))
 		userGroupIDs = append(userGroupIDs, localGroup.ID)
 	}
 
@@ -641,6 +644,20 @@ func pruneDuplicates(ss []string) []string {
 		ns = append(ns, s)
 	}
 	return ns
+}
+
+// keystoneGroupPrefix namespaces raw Keystone group names (local and SSO) in
+// the groups claim. Role groups always start with customerName, a DNS label
+// that can't contain ':', so a Keystone group can't be named to impersonate
+// a role group (e.g. "<customer>-<role>").
+const keystoneGroupPrefix = "keystone:"
+
+// keystoneGroupClaim returns the groups-claim name for a Keystone group:
+// keystone:<domainID>/<groupName>. Group names are only unique per domain, and
+// domain IDs never contain '/', so the result is unambiguous for any group
+// name. The name is kept verbatim.
+func keystoneGroupClaim(group keystoneGroup) string {
+	return keystoneGroupPrefix + group.DomainID + "/" + group.Name
 }
 
 // generateGroupName generates a group name based on project scope and role
