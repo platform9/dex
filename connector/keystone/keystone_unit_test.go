@@ -618,3 +618,95 @@ func TestGetAllGroupsForUser_ProjectIDCheckSkippedWhenAbsent(t *testing.T) {
 		t.Fatalf("did not expect a /v3/projects call when project_id is absent")
 	}
 }
+
+// rawGroupsHandler serves a fake Keystone where the user belongs to the given
+// local groups, /v3/groups lists allGroups, and the user has no role
+// assignments of their own.
+func rawGroupsHandler(t *testing.T, localGroups, allGroups []keystoneGroup) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v3/groups"):
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: allGroups})
+		case strings.Contains(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(groupsResponse{Groups: localGroups})
+		case strings.HasSuffix(r.URL.Path, "/v3/role_assignments"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"role_assignments": []}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}
+}
+
+func TestGetAllGroupsForUser_LocalGroupCannotSpoofRoleGroup(t *testing.T) {
+	// A domain admin creates a local group named exactly like the
+	// system-scoped role3 role group and joins it.
+	spoof := keystoneGroup{ID: "g1", Name: "cust-role3", DomainID: "dom-1"}
+	ts := httptest.NewServer(rawGroupsHandler(t, []keystoneGroup{spoof}, []keystoneGroup{spoof}))
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
+	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
+
+	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "", info, logger)
+	if err != nil {
+		t.Fatalf("getAllGroupsForUser error: %v", err)
+	}
+
+	want := "keystone:dom-1/cust-role3"
+	if len(groups) != 1 || groups[0] != want {
+		t.Fatalf("unexpected groups: got %v, want [%q]", groups, want)
+	}
+}
+
+func TestGetAllGroupsForUser_SSOGroupResolvedWithDomain(t *testing.T) {
+	// Federated tokens may carry only the group ID; name and domain come
+	// from /v3/groups. Group names may contain spaces and are kept verbatim.
+	sso := keystoneGroup{ID: "g-sso", Name: "Platform Devs", DomainID: "dom-sso"}
+	ts := httptest.NewServer(rawGroupsHandler(t, nil, []keystoneGroup{sso}))
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
+	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
+	info.User.OSFederation = &struct {
+		Groups           []keystoneGroup `json:"groups"`
+		IdentityProvider struct {
+			ID string `json:"id"`
+		} `json:"identity_provider"`
+		Protocol struct {
+			ID string `json:"id"`
+		} `json:"protocol"`
+	}{Groups: []keystoneGroup{{ID: "g-sso"}}}
+
+	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "", info, logger)
+	if err != nil {
+		t.Fatalf("getAllGroupsForUser error: %v", err)
+	}
+
+	want := "keystone:dom-sso/Platform Devs"
+	if len(groups) != 1 || groups[0] != want {
+		t.Fatalf("unexpected groups: got %v, want [%q]", groups, want)
+	}
+}
+
+func TestGetAllGroupsForUser_SkipsGroupWithUnknownDomain(t *testing.T) {
+	// Without a domain ID the group can't be namespaced, so it must be
+	// dropped rather than emitted under an ambiguous name.
+	noDomain := keystoneGroup{ID: "g1", Name: "devs"}
+	ts := httptest.NewServer(rawGroupsHandler(t, []keystoneGroup{noDomain}, []keystoneGroup{noDomain}))
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
+	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
+
+	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "", info, logger)
+	if err != nil {
+		t.Fatalf("getAllGroupsForUser error: %v", err)
+	}
+	if len(groups) != 0 {
+		t.Fatalf("expected no groups, got %v", groups)
+	}
+}
