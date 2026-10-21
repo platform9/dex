@@ -214,6 +214,7 @@ func TestGetAllGroupsForUser_MultiScopeDispatch(t *testing.T) {
 
 	want := map[string]bool{
 		"cust-cust-domain-my-project-admin": true, // 4-part project group
+		"cust-proj-1-admin":                 true, // project ID group
 		"cust-second-domain-role2":          true, // 3-part domain group
 		"cust-role3":                        true, // 2-part system group
 	}
@@ -267,9 +268,9 @@ func TestGetAllGroupsForUser_ProjectGroupUsesRowDomain(t *testing.T) {
 		t.Fatalf("getAllGroupsForUser error: %v", err)
 	}
 
-	want := "cust-rowdomain-myproject-admin"
-	if len(groups) != 1 || groups[0] != want {
-		t.Fatalf("unexpected groups: got %v, want [%q]", groups, want)
+	want := []string{"cust-rowdomain-myproject-admin", "cust-proj-1-admin"}
+	if len(groups) != len(want) || groups[0] != want[0] || groups[1] != want[1] {
+		t.Fatalf("unexpected groups: got %v, want %q", groups, want)
 	}
 }
 
@@ -330,6 +331,7 @@ func TestGetAllGroupsForUser_ProjectIDStillIncludesDomainAndSystemRoles(t *testi
 
 	want := map[string]bool{
 		"cust-cust-domain-my-project-admin": true, // project-scoped, matches the requested project
+		"cust-proj-1-admin":                 true, // project ID group for the requested project
 		"cust-second-domain-role2":          true, // domain-scoped, must still appear
 		"cust-role3":                        true, // system-scoped, must still appear
 	}
@@ -407,6 +409,16 @@ func TestGenerateGroupName(t *testing.T) {
 	role := namedIdentifier{Name: "_member_"}
 	got := generateGroupName(p, role, "cust")
 	want := "cust-my-domain-my-project-member"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestGenerateProjectIDGroupName(t *testing.T) {
+	p := projectScope{ID: "8f3a9b2c4d5e6f708192a3b4c5d6e7f8"}
+	role := namedIdentifier{Name: "_member_"}
+	got := generateProjectIDGroupName(p, role, "cust")
+	want := "cust-8f3a9b2c-member"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
