@@ -661,12 +661,17 @@ func keystoneGroupClaim(group keystoneGroup) string {
 	return keystoneGroupPrefix + group.DomainID + "/" + group.Name
 }
 
+// normalizeRole replaces "-" with "_" since "-" is the group name separator
+func normalizeRole(role namedIdentifier) string {
+	if role.Name == "_member_" {
+		return "member"
+	}
+	return strings.ReplaceAll(role.Name, "-", "_")
+}
+
 // generateGroupName generates a group name based on project scope and role
 func generateGroupName(project projectScope, role namedIdentifier, customerName string) string {
-	roleName := role.Name
-	if roleName == "_member_" {
-		roleName = "member"
-	}
+	roleName := normalizeRole(role)
 	domainName := strings.ToLower(strings.ReplaceAll(project.Domain.Name, "_", "-"))
 	projectName := strings.ToLower(strings.ReplaceAll(project.Name, "_", "-"))
 	return customerName + "-" + domainName + "-" + projectName + "-" + roleName
@@ -675,10 +680,7 @@ func generateGroupName(project projectScope, role namedIdentifier, customerName 
 // generateProjectIDGroupName generates a group name based on the first 8 characters
 // of the project ID and role
 func generateProjectIDGroupName(project projectScope, role namedIdentifier, customerName string) string {
-	roleName := role.Name
-	if roleName == "_member_" {
-		roleName = "member"
-	}
+	roleName := normalizeRole(role)
 	projectID := project.ID
 	if len(projectID) > 8 {
 		projectID = projectID[:8]
@@ -688,20 +690,14 @@ func generateProjectIDGroupName(project projectScope, role namedIdentifier, cust
 
 // generateDomainGroupName generates a group name for a domain-scoped role assignment
 func generateDomainGroupName(domain namedIdentifier, role namedIdentifier, customerName string) string {
-	roleName := role.Name
-	if roleName == "_member_" {
-		roleName = "member"
-	}
+	roleName := normalizeRole(role)
 	domainName := strings.ToLower(strings.ReplaceAll(domain.Name, "_", "-"))
 	return customerName + "-" + domainName + "-" + roleName
 }
 
 // generateSystemGroupName generates a group name for a system-scoped role assignment
 func generateSystemGroupName(role namedIdentifier, customerName string) string {
-	roleName := role.Name
-	if roleName == "_member_" {
-		roleName = "member"
-	}
+	roleName := normalizeRole(role)
 	return customerName + "-" + roleName
 }
 
