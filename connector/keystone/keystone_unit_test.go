@@ -428,7 +428,7 @@ func TestGenerateProjectIDGroupName_HyphenatedRole(t *testing.T) {
 	p := projectScope{ID: "8f3a9b2c4d5e6f708192a3b4c5d6e7f8"}
 	role := namedIdentifier{Name: "dev-admin"}
 	got := generateProjectIDGroupName(p, role, "cust")
-	want := "cust-8f3a9b2c-dev_admin"
+	want := "cust-8f3a9b2c-dev.admin"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -478,9 +478,9 @@ func TestGetAllGroupsForUser_HyphenatedRoleCannotSpoofProjectIDGroup(t *testing.
 	}
 
 	want := map[string]bool{
-		"cust-default-dev-custom_member": true, // 4-part project group
-		"cust-8f3a9b2c-custom_member":    true, // project ID group
-		"cust-8f3a9b2c_admin":            true, // system group
+		"cust-default-dev-custom.member": true, // 4-part project group
+		"cust-8f3a9b2c-custom.member":    true, // project ID group
+		"cust-8f3a9b2c.admin":            true, // system group
 	}
 	if len(groups) != len(want) {
 		t.Fatalf("unexpected groups: got %v, want keys %v", groups, want)
@@ -727,7 +727,7 @@ func TestNormalizeRole(t *testing.T) {
 		"admin":             "admin",
 		"tenant_admin":      "tenant_admin",
 		"platform_admin":    "platform_admin",
-		"default-dev-admin": "default_dev_admin",
+		"default-dev-admin": "default.dev.admin",
 	}
 	for in, want := range tests {
 		if got := normalizeRole(namedIdentifier{Name: in}); got != want {
@@ -817,7 +817,7 @@ func TestHyphenatedRoleCannotSpoofProjectGroup(t *testing.T) {
 	if systemGroup == projectGroup {
 		t.Fatalf("system role group %q collides with project group", systemGroup)
 	}
-	if want := "acme-default_dev_admin"; systemGroup != want {
+	if want := "acme-default.dev.admin"; systemGroup != want {
 		t.Fatalf("got %q, want %q", systemGroup, want)
 	}
 
