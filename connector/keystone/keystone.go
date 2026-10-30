@@ -661,12 +661,12 @@ func keystoneGroupClaim(group keystoneGroup) string {
 	return keystoneGroupPrefix + group.DomainID + "/" + group.Name
 }
 
-// normalizeRole replaces "-" with "_" since "-" is the group name separator
+// normalizeRole replaces "-" with "." since "-" is the group name separator
 func normalizeRole(role namedIdentifier) string {
 	if role.Name == "_member_" {
 		return "member"
 	}
-	return strings.ReplaceAll(role.Name, "-", "_")
+	return strings.ReplaceAll(role.Name, "-", ".")
 }
 
 // generateGroupName generates a group name based on project scope and role
