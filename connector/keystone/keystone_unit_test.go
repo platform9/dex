@@ -213,10 +213,9 @@ func TestGetAllGroupsForUser_MultiScopeDispatch(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"cust-cust-domain-my-project-admin": true, // 4-part project group
-		"cust-proj-1-admin":                 true, // project ID group
-		"cust-second-domain-role2":          true, // 3-part domain group
-		"cust-role3":                        true, // 2-part system group
+		"cust-p-proj-1-admin": true, // project group
+		"cust-d-dom-2-role2":  true, // domain group
+		"cust-s-role3":        true, // system group
 	}
 	if len(groups) != len(want) {
 		t.Fatalf("unexpected groups: got %v, want keys %v", groups, want)
@@ -225,52 +224,6 @@ func TestGetAllGroupsForUser_MultiScopeDispatch(t *testing.T) {
 		if !want[g] {
 			t.Errorf("unexpected group %q in result %v", g, groups)
 		}
-	}
-}
-
-func TestGetAllGroupsForUser_ProjectGroupUsesRowDomain(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/v3/groups"):
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(groupsResponse{})
-			return
-		case strings.Contains(r.URL.Path, "/v3/users/") && strings.HasSuffix(r.URL.Path, "/groups"):
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(groupsResponse{})
-			return
-		case strings.HasSuffix(r.URL.Path, "/v3/role_assignments"):
-			body := `{
-				"role_assignments": [
-					{
-						"scope": {"project": {"id": "proj-1", "name": "myproject", "domain": {"id": "dom-1", "name": "RowDomain"}}},
-						"user": {"id": "u1"},
-						"role": {"id": "role-admin", "name": "admin"}
-					}
-				]
-			}`
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(body))
-			return
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer ts.Close()
-
-	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
-	info := &tokenInfo{User: userKeystone{ID: "u1", Name: "user1"}}
-
-	// Project group names use the role assignment's own
-	// scope.project.domain.name, not any connector-level config.
-	groups, err := getAllGroupsForUser(t.Context(), ts.Client(), ts.URL, "tok", "cust", "", info, logger)
-	if err != nil {
-		t.Fatalf("getAllGroupsForUser error: %v", err)
-	}
-
-	want := []string{"cust-rowdomain-myproject-admin", "cust-proj-1-admin"}
-	if len(groups) != len(want) || groups[0] != want[0] || groups[1] != want[1] {
-		t.Fatalf("unexpected groups: got %v, want %q", groups, want)
 	}
 }
 
@@ -330,10 +283,9 @@ func TestGetAllGroupsForUser_ProjectIDStillIncludesDomainAndSystemRoles(t *testi
 	}
 
 	want := map[string]bool{
-		"cust-cust-domain-my-project-admin": true, // project-scoped, matches the requested project
-		"cust-proj-1-admin":                 true, // project ID group for the requested project
-		"cust-second-domain-role2":          true, // domain-scoped, must still appear
-		"cust-role3":                        true, // system-scoped, must still appear
+		"cust-p-proj-1-admin": true, // project group for the requested project
+		"cust-d-dom-2-role2":  true, // domain-scoped, must still appear
+		"cust-s-role3":        true, // system-scoped, must still appear
 	}
 	if len(groups) != len(want) {
 		t.Fatalf("unexpected groups: got %v, want keys %v", groups, want)
@@ -392,7 +344,7 @@ func TestGetAllGroupsForUser_ProjectIDExcludesOtherProjects(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"cust-role3": true, // system-scoped, must still appear
+		"cust-s-role3": true, // system-scoped, must still appear
 	}
 	if len(groups) != len(want) {
 		t.Fatalf("unexpected groups: got %v, want keys %v (other-project's role must be excluded)", groups, want)
@@ -404,21 +356,11 @@ func TestGetAllGroupsForUser_ProjectIDExcludesOtherProjects(t *testing.T) {
 	}
 }
 
-func TestGenerateGroupName(t *testing.T) {
-	p := projectScope{Name: "My_Project", Domain: namedIdentifier{Name: "My_Domain"}}
-	role := namedIdentifier{Name: "_member_"}
-	got := generateGroupName(p, role, "cust")
-	want := "cust-my-domain-my-project-member"
-	if got != want {
-		t.Fatalf("got %q, want %q", got, want)
-	}
-}
-
 func TestGenerateProjectIDGroupName(t *testing.T) {
 	p := projectScope{ID: "8f3a9b2c4d5e6f708192a3b4c5d6e7f8"}
 	role := namedIdentifier{Name: "_member_"}
 	got := generateProjectIDGroupName(p, role, "cust")
-	want := "cust-8f3a9b2c-member"
+	want := "cust-p-8f3a9b2c4d5e6f708192a3b4c5d6e7f8-member"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -428,7 +370,7 @@ func TestGenerateProjectIDGroupName_HyphenatedRole(t *testing.T) {
 	p := projectScope{ID: "8f3a9b2c4d5e6f708192a3b4c5d6e7f8"}
 	role := namedIdentifier{Name: "dev-admin"}
 	got := generateProjectIDGroupName(p, role, "cust")
-	want := "cust-8f3a9b2c-dev.admin"
+	want := "cust-p-8f3a9b2c4d5e6f708192a3b4c5d6e7f8-dev-admin"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -478,9 +420,8 @@ func TestGetAllGroupsForUser_HyphenatedRoleCannotSpoofProjectIDGroup(t *testing.
 	}
 
 	want := map[string]bool{
-		"cust-default-dev-custom.member": true, // 4-part project group
-		"cust-8f3a9b2c-custom.member":    true, // project ID group
-		"cust-8f3a9b2c.admin":            true, // system group
+		"cust-p-8f3a9b2c4d5e6f708192a3b4c5d6e7f8-custom-member": true, // project group
+		"cust-s-8f3a9b2c-admin":                                 true, // system group
 	}
 	if len(groups) != len(want) {
 		t.Fatalf("unexpected groups: got %v, want keys %v", groups, want)
@@ -493,10 +434,10 @@ func TestGetAllGroupsForUser_HyphenatedRoleCannotSpoofProjectIDGroup(t *testing.
 }
 
 func TestGenerateDomainGroupName(t *testing.T) {
-	domain := namedIdentifier{Name: "Second_Domain"}
+	domain := namedIdentifier{ID: "dom-2", Name: "Second_Domain"}
 	role := namedIdentifier{Name: "role2"}
 	got := generateDomainGroupName(domain, role, "cust")
-	want := "cust-second-domain-role2"
+	want := "cust-d-dom-2-role2"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -505,7 +446,7 @@ func TestGenerateDomainGroupName(t *testing.T) {
 func TestGenerateSystemGroupName(t *testing.T) {
 	role := namedIdentifier{Name: "_member_"}
 	got := generateSystemGroupName(role, "cust")
-	want := "cust-member"
+	want := "cust-s-member"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -727,7 +668,7 @@ func TestNormalizeRole(t *testing.T) {
 		"admin":             "admin",
 		"tenant_admin":      "tenant_admin",
 		"platform_admin":    "platform_admin",
-		"default-dev-admin": "default.dev.admin",
+		"default-dev-admin": "default-dev-admin",
 	}
 	for in, want := range tests {
 		if got := normalizeRole(namedIdentifier{Name: in}); got != want {
@@ -739,7 +680,7 @@ func TestNormalizeRole(t *testing.T) {
 func TestGetAllGroupsForUser_LocalGroupCannotSpoofRoleGroup(t *testing.T) {
 	// A domain admin creates a local group named exactly like the
 	// system-scoped role3 role group and joins it.
-	spoof := keystoneGroup{ID: "g1", Name: "cust-role3", DomainID: "dom-1"}
+	spoof := keystoneGroup{ID: "g1", Name: "cust-s-role3", DomainID: "dom-1"}
 	ts := httptest.NewServer(rawGroupsHandler(t, []keystoneGroup{spoof}, []keystoneGroup{spoof}))
 	defer ts.Close()
 
@@ -751,7 +692,7 @@ func TestGetAllGroupsForUser_LocalGroupCannotSpoofRoleGroup(t *testing.T) {
 		t.Fatalf("getAllGroupsForUser error: %v", err)
 	}
 
-	want := "keystone:dom-1/cust-role3"
+	want := "keystone:dom-1/cust-s-role3"
 	if len(groups) != 1 || groups[0] != want {
 		t.Fatalf("unexpected groups: got %v, want [%q]", groups, want)
 	}
@@ -807,28 +748,14 @@ func TestGetAllGroupsForUser_SkipsGroupWithUnknownDomain(t *testing.T) {
 }
 
 func TestHyphenatedRoleCannotSpoofProjectGroup(t *testing.T) {
-	project := projectScope{
-		Name:   "dev",
-		Domain: namedIdentifier{Name: "default"},
-	}
-	projectGroup := generateGroupName(project, namedIdentifier{Name: "admin"}, "acme")
-
 	systemGroup := generateSystemGroupName(namedIdentifier{Name: "default-dev-admin"}, "acme")
-	if systemGroup == projectGroup {
-		t.Fatalf("system role group %q collides with project group", systemGroup)
-	}
-	if want := "acme-default.dev.admin"; systemGroup != want {
+	if want := "acme-s-default-dev-admin"; systemGroup != want {
 		t.Fatalf("got %q, want %q", systemGroup, want)
-	}
-
-	domainGroup := generateDomainGroupName(namedIdentifier{Name: "default"}, namedIdentifier{Name: "dev-admin"}, "acme")
-	if domainGroup == projectGroup {
-		t.Fatalf("domain role group %q collides with project group", domainGroup)
 	}
 
 	idProject := projectScope{ID: "8f3a9b2c4d5e6f708192a3b4c5d6e7f8"}
 	idGroup := generateProjectIDGroupName(idProject, namedIdentifier{Name: "admin"}, "acme")
-	spoof := generateSystemGroupName(namedIdentifier{Name: "8f3a9b2c-admin"}, "acme")
+	spoof := generateSystemGroupName(namedIdentifier{Name: "p-8f3a9b2c4d5e6f708192a3b4c5d6e7f8-admin"}, "acme")
 	if spoof == idGroup {
 		t.Fatalf("system role group %q collides with project ID group", spoof)
 	}

@@ -570,7 +570,6 @@ func getAllGroupsForUser(ctx context.Context, client *http.Client, baseURL, toke
 		}
 		switch {
 		case ra.Scope.Project != nil:
-			roleGroups = append(roleGroups, generateGroupName(*ra.Scope.Project, ra.Role, customerName))
 			roleGroups = append(roleGroups, generateProjectIDGroupName(*ra.Scope.Project, ra.Role, customerName))
 		case ra.Scope.Domain != nil:
 			roleGroups = append(roleGroups, generateDomainGroupName(*ra.Scope.Domain, ra.Role, customerName))
@@ -661,44 +660,32 @@ func keystoneGroupClaim(group keystoneGroup) string {
 	return keystoneGroupPrefix + group.DomainID + "/" + group.Name
 }
 
-// normalizeRole replaces "-" with "." since "-" is the group name separator
+// normalizeRole maps Keystone's legacy "_member_" role to "member". Other role
+// names are kept verbatim: the scope marker in the group name already keeps a
+// role name from spoofing a group of another scope.
 func normalizeRole(role namedIdentifier) string {
 	if role.Name == "_member_" {
 		return "member"
 	}
-	return strings.ReplaceAll(role.Name, "-", ".")
+	return role.Name
 }
 
-// generateGroupName generates a group name based on project scope and role
-func generateGroupName(project projectScope, role namedIdentifier, customerName string) string {
-	roleName := normalizeRole(role)
-	domainName := strings.ToLower(strings.ReplaceAll(project.Domain.Name, "_", "-"))
-	projectName := strings.ToLower(strings.ReplaceAll(project.Name, "_", "-"))
-	return customerName + "-" + domainName + "-" + projectName + "-" + roleName
-}
-
-// generateProjectIDGroupName generates a group name based on the first 8 characters
-// of the project ID and role
+// generateProjectIDGroupName generates a group name for a project-scoped role
+// assignment: <customerName>-p-<projectID>-<role>
 func generateProjectIDGroupName(project projectScope, role namedIdentifier, customerName string) string {
-	roleName := normalizeRole(role)
-	projectID := project.ID
-	if len(projectID) > 8 {
-		projectID = projectID[:8]
-	}
-	return customerName + "-" + projectID + "-" + roleName
+	return customerName + "-p-" + project.ID + "-" + normalizeRole(role)
 }
 
-// generateDomainGroupName generates a group name for a domain-scoped role assignment
+// generateDomainGroupName generates a group name for a domain-scoped role
+// assignment: <customerName>-d-<domainID>-<role>
 func generateDomainGroupName(domain namedIdentifier, role namedIdentifier, customerName string) string {
-	roleName := normalizeRole(role)
-	domainName := strings.ToLower(strings.ReplaceAll(domain.Name, "_", "-"))
-	return customerName + "-" + domainName + "-" + roleName
+	return customerName + "-d-" + domain.ID + "-" + normalizeRole(role)
 }
 
-// generateSystemGroupName generates a group name for a system-scoped role assignment
+// generateSystemGroupName generates a group name for a system-scoped role
+// assignment: <customerName>-s-<role>
 func generateSystemGroupName(role namedIdentifier, customerName string) string {
-	roleName := normalizeRole(role)
-	return customerName + "-" + roleName
+	return customerName + "-s-" + normalizeRole(role)
 }
 
 func findGroupByID(groups []keystoneGroup, groupID string) (group keystoneGroup, ok bool) {
