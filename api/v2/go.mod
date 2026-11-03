@@ -1,6 +1,6 @@
 module github.com/dexidp/dex/api/v2
 
-go 1.26.0
+go 1.26.10
 
 require (
 	google.golang.org/grpc v1.83.2

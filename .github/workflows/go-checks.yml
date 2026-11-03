@@ -1,0 +1,65 @@
+name: Go Checks
+
+on:
+  pull_request:
+    paths:
+      - "go.mod"
+      - "api/v2/go.mod"
+      - "examples/go.mod"
+      - ".tool-versions"
+      - "Dockerfile"
+      - ".github/workflows/**"
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  check-go-version-consistency:
+    name: Go version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Check Go versions match across config files
+        run: |
+          set -euo pipefail
+
+          GO_YML_VERSION=$(grep 'GO_VERSION:' .github/workflows/_go.yml | awk '{print $2}' | tr -d '"~')
+          TOOL_VERSION=$(grep '^golang ' .tool-versions | awk '{print $2}')
+          DOCKER_VERSION=$(grep -oE 'golang:[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | cut -d: -f2)
+
+          echo "_go.yml (source of truth): ${GO_YML_VERSION}"
+
+          FAILED=0
+          check() {
+            echo "$1: $2"
+            if [ "$2" != "$GO_YML_VERSION" ]; then
+              echo "Error: $1 ($2) does not match _go.yml (${GO_YML_VERSION})."
+              FAILED=1
+            fi
+          }
+
+          for mod in go.mod api/v2/go.mod examples/go.mod; do
+            check "$mod" "$(grep '^go ' "$mod" | awk '{print $2}')"
+          done
+          check ".tool-versions" "$TOOL_VERSION"
+          check "Dockerfile" "$DOCKER_VERSION"
+
+          # Any workflow that sets up Go must take the version from _go.yml.
+          HARDCODED=$(grep -rnE 'go-version:\s*["'\'']?[0-9]' .github/workflows/ || true)
+          if [ -n "$HARDCODED" ]; then
+            echo "Error: hardcoded go-version in workflows (use the _go.yml output instead):"
+            echo "$HARDCODED"
+            FAILED=1
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "❌ Fix: update go.mod (+ api/v2, examples), .tool-versions, Dockerfile and .github/workflows/_go.yml to the same Go version."
+            exit 1
+          fi
+
+          echo "✅ All Go versions match: ${GO_YML_VERSION}"
