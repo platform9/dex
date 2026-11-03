@@ -26,7 +26,6 @@ import (
 
 	"github.com/Masterminds/semver"
 	"github.com/ghodss/yaml"
-	"golang.org/x/net/http2"
 
 	"github.com/dexidp/dex/storage"
 	"github.com/dexidp/dex/storage/kubernetes/k8sapi"
@@ -395,9 +394,16 @@ func newClient(cluster k8sapi.Cluster, user k8sapi.AuthInfo, namespace string, l
 		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
 
+	// Since we set a custom TLS client config we have to explicitly
+	// enable HTTP/2 alongside HTTP/1.1.
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetHTTP2(true)
+
 	var t http.RoundTripper
 	httpTransport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		Protocols: protocols,
+		Proxy:     http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
@@ -407,13 +413,6 @@ func newClient(cluster k8sapi.Cluster, user k8sapi.AuthInfo, namespace string, l
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
-	// Since we set a custom TLS client config we have to explicitly
-	// enable HTTP/2.
-	//
-	// https://github.com/golang/go/blob/go1.7.4/src/net/http/transport.go#L200-L206
-	if err := http2.ConfigureTransport(httpTransport); err != nil {
-		return nil, err
-	}
 	t = wrapRoundTripper(httpTransport, user, inCluster)
 
 	apiVersion := "dex.coreos.com/v1"
