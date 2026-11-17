@@ -167,18 +167,29 @@ func (p *conn) authenticate(ctx context.Context, username, pass string, scopes c
 		domainID = defaultUserDomainID
 	}
 	domain := domainKeystone{ID: domainID}
+	authIdentity := identity{
+		Methods: []string{"password"},
+		Password: password{
+			User: user{
+				Name:     username,
+				Domain:   domain,
+				Password: pass,
+			},
+		},
+	}
+	if scopes.MFACode != "" {
+		authIdentity.Methods = append(authIdentity.Methods, "totp")
+		authIdentity.Totp = &totp{
+			User: totpUser{
+				Name:     username,
+				Domain:   domain,
+				Passcode: scopes.MFACode,
+			},
+		}
+	}
 	jsonData := loginRequestData{
 		auth: auth{
-			Identity: identity{
-				Methods: []string{"password"},
-				Password: password{
-					User: user{
-						Name:     username,
-						Domain:   domain,
-						Password: pass,
-					},
-				},
-			},
+			Identity: authIdentity,
 		},
 	}
 	jsonValue, err := json.Marshal(jsonData)

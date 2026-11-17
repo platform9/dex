@@ -2,6 +2,14 @@
   box-sizing: border-box;
 }
 
+/* Theme stylesheets set .theme-form-row { display: block }, which as an
+   author rule overrides the browser's default [hidden] { display: none },
+   even at equal specificity. Restore it explicitly so hidden form rows
+   (e.g. the MFA code field) actually stay hidden. */
+[hidden] {
+  display: none !important;
+}
+
 html, body, input, button, select, textarea {
   font-family: "Eina04";
 }

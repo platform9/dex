@@ -68,6 +68,9 @@ type auth struct {
 type identity struct {
 	Methods  []string `json:"methods"`
 	Password password `json:"password"`
+	// Totp carries the second-factor passcode. Omitted entirely for
+	// non-MFA logins so the request body is unchanged from before.
+	Totp *totp `json:"totp,omitempty"`
 }
 
 // password represents the password authentication method
@@ -80,6 +83,18 @@ type user struct {
 	Name     string         `json:"name"`
 	Domain   domainKeystone `json:"domain"`
 	Password string         `json:"password"`
+}
+
+// totp represents the TOTP (MFA) authentication method
+type totp struct {
+	User totpUser `json:"user"`
+}
+
+// totpUser identifies the user for the totp authentication method
+type totpUser struct {
+	Name     string         `json:"name"`
+	Domain   domainKeystone `json:"domain"`
+	Passcode string         `json:"passcode"`
 }
 
 // tokenInfo represents information about a token

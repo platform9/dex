@@ -27,6 +27,10 @@ type Scopes struct {
 	// DomainID, if set, is the domain to authenticate the end user
 	// against, for connectors that support multiple domains.
 	DomainID string
+
+	// MFACode, if set, is a second-factor passcode (e.g. TOTP) supplied
+	// alongside the password, for connectors that support MFA.
+	MFACode string
 }
 
 // Identity represents the ID Token claims supported by the server.
