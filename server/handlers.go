@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -363,7 +364,7 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		if err := s.templates.password(r, w, r.URL.String(), "", usernamePrompt(pwConn), false, backLink); err != nil {
+		if err := s.templates.password(r, w, r.URL.String(), "", usernamePrompt(pwConn), false, false, backLink); err != nil {
 			s.logger.ErrorContext(r.Context(), "server template error", "err", err)
 		}
 	case http.MethodPost:
@@ -373,13 +374,14 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		scopes.MFACode = r.FormValue("mfa_code")
 
 		identity, ok, err := pwConn.Login(r.Context(), scopes, username, password)
-		if err != nil {
+		mfaRequired := errors.Is(err, connector.ErrMFARequired)
+		if err != nil && !mfaRequired {
 			s.logger.ErrorContext(r.Context(), "failed to login user", "err", err)
 			s.renderError(r, w, http.StatusInternalServerError, fmt.Sprintf("Login error: %v", err))
 			return
 		}
 		if !ok {
-			if err := s.templates.password(r, w, r.URL.String(), username, usernamePrompt(pwConn), true, backLink); err != nil {
+			if err := s.templates.password(r, w, r.URL.String(), username, usernamePrompt(pwConn), true, mfaRequired, backLink); err != nil {
 				s.logger.ErrorContext(r.Context(), "server template error", "err", err)
 			}
 			s.logger.ErrorContext(r.Context(), "failed login attempt: Invalid credentials.", "user", username)

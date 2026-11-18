@@ -771,6 +771,61 @@ func TestHandlePasswordLoginWithSkipApproval(t *testing.T) {
 	}
 }
 
+// TestHandlePasswordLoginConnectorErrors checks that MFA required re-renders the login form with a 401, while other connector errors stay a 500.
+func TestHandlePasswordLoginConnectorErrors(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	connID := "mockPw"
+	authReqID := "test"
+
+	tests := []struct {
+		name     string
+		loginErr error
+		wantCode int
+		wantBody string
+	}{
+		{name: "MFA required", loginErr: connector.ErrMFARequired, wantCode: http.StatusUnauthorized, wantBody: "This account requires an MFA code."},
+		{name: "other error", loginErr: errors.New("upstream down"), wantCode: http.StatusInternalServerError, wantBody: "Login error"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			httpServer, s := newTestServer(ctx, t, nil)
+			defer httpServer.Close()
+
+			sc := storage.Connector{
+				ID:              connID,
+				Type:            "mockPassword",
+				Name:            "MockPassword",
+				ResourceVersion: "1",
+				Config:          []byte("{\"username\": \"foo\", \"password\": \"password\"}"),
+			}
+			require.NoError(t, s.storage.CreateConnector(ctx, sc))
+			_, err := s.OpenConnector(sc)
+			require.NoError(t, err)
+			require.NoError(t, s.storage.CreateAuthRequest(ctx, storage.AuthRequest{
+				ID:            authReqID,
+				ConnectorID:   connID,
+				RedirectURI:   "cb",
+				Expiry:        time.Now().Add(100 * time.Second),
+				ResponseTypes: []string{responseTypeCode},
+			}))
+
+			conn, err := s.getConnector(ctx, connID)
+			require.NoError(t, err)
+			conn.Connector.(*mock.PasswordConnector).LoginErr = tc.loginErr
+
+			rr := httptest.NewRecorder()
+			path := fmt.Sprintf("/auth/%s/login?state=%s&back=&login=foo&password=password", connID, authReqID)
+			s.handlePasswordLogin(rr, httptest.NewRequest("POST", path, nil))
+
+			require.Equal(t, tc.wantCode, rr.Code)
+			require.Contains(t, rr.Body.String(), tc.wantBody)
+		})
+	}
+}
+
 func TestHandleConnectorCallbackWithSkipApproval(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

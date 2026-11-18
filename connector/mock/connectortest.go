@@ -111,12 +111,18 @@ type PasswordConnector struct {
 	// from Login/Refresh, given the Scopes that call received — lets tests
 	// simulate scope-dependent group narrowing (e.g. by ProjectID).
 	GroupsForScopes func(connector.Scopes) []string
+
+	// LoginErr, if set, is returned by Login, to simulate a connector error.
+	LoginErr error
 }
 
 func (p *PasswordConnector) Close() error { return nil }
 
 func (p *PasswordConnector) Login(ctx context.Context, s connector.Scopes, username, password string) (identity connector.Identity, validPassword bool, err error) {
 	p.LastScopes = s
+	if p.LoginErr != nil {
+		return identity, false, p.LoginErr
+	}
 	if username == p.username && password == p.password {
 		var groups []string
 		if p.GroupsForScopes != nil {

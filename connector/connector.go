@@ -3,8 +3,12 @@ package connector
 
 import (
 	"context"
+	"errors"
 	"net/http"
 )
+
+// ErrMFARequired is returned by a PasswordConnector when the upstream accepted the password but also requires a second factor.
+var ErrMFARequired = errors.New("multi-factor authentication required")
 
 // Connector is a mechanism for federating login to a remote identity service.
 //
