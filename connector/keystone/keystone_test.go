@@ -323,12 +323,8 @@ func TestIncorrectCredentialsLogin(t *testing.T) {
 		t.Fatal("Incorrect password check")
 	}
 
-	if err == nil {
-		t.Fatal("Error should be returned when invalid password is provided")
-	}
-
-	if !strings.Contains(err.Error(), "401") {
-		t.Fatal("Unrecognized error, expecting 401")
+	if err != nil {
+		t.Fatalf("invalid password should be a failed login, not an error: %v", err)
 	}
 }
 

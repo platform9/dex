@@ -384,7 +384,9 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 			if err := s.templates.password(r, w, r.URL.String(), username, usernamePrompt(pwConn), true, mfaRequired, backLink); err != nil {
 				s.logger.ErrorContext(r.Context(), "server template error", "err", err)
 			}
-			s.logger.ErrorContext(r.Context(), "failed login attempt: Invalid credentials.", "user", username)
+			if !mfaRequired {
+				s.logger.ErrorContext(r.Context(), "failed login attempt: Invalid credentials.", "user", username)
+			}
 			return
 		}
 		redirectURL, canSkipApproval, err := s.finalizeLogin(r.Context(), identity, authReq, conn.Connector)
