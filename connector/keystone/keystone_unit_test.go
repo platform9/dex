@@ -2,6 +2,7 @@ package keystone
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -457,20 +458,43 @@ func TestGenerateSystemGroupName(t *testing.T) {
 type authenticateRequestBody struct {
 	Auth struct {
 		Identity struct {
+			Methods  []string `json:"methods"`
 			Password struct {
 				User struct {
 					Name   string         `json:"name"`
 					Domain domainKeystone `json:"domain"`
 				} `json:"user"`
 			} `json:"password"`
+			Totp *struct {
+				User struct {
+					Name     string         `json:"name"`
+					Domain   domainKeystone `json:"domain"`
+					Passcode string         `json:"passcode"`
+				} `json:"user"`
+			} `json:"totp"`
 		} `json:"identity"`
 	} `json:"auth"`
 }
 
 func newAuthenticateStubServer(t *testing.T, capture *authenticateRequestBody) *httptest.Server {
 	t.Helper()
+	return newAuthenticateStubServerWithRawBody(t, capture, nil)
+}
+
+// newAuthenticateStubServerWithRawBody additionally captures the raw request
+// body into rawBody (when non-nil), so a test can assert a field is entirely
+// absent from the wire JSON rather than just zero-valued after decoding.
+func newAuthenticateStubServerWithRawBody(t *testing.T, capture *authenticateRequestBody, rawBody *string) *httptest.Server {
+	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(capture); err != nil {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read request body: %v", err)
+		}
+		if rawBody != nil {
+			*rawBody = string(data)
+		}
+		if err := json.Unmarshal(data, capture); err != nil {
 			t.Fatalf("failed to decode request body: %v", err)
 		}
 		w.Header().Set("X-Subject-Token", "tok")
@@ -529,6 +553,91 @@ func TestAuthenticate_FallsBackToDefaultDomainWhenAbsent(t *testing.T) {
 	if got.Auth.Identity.Password.User.Domain.Name == "admin-account-domain" {
 		t.Fatalf("Config.Domain must never be used for end-user login, got domain=%+v", got.Auth.Identity.Password.User.Domain)
 	}
+}
+
+func TestAuthenticate_MFACodeAddsTotpMethod(t *testing.T) {
+	var got authenticateRequestBody
+	ts := newAuthenticateStubServer(t, &got)
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
+	p := &conn{
+		Domain: domainKeystone{Name: "admin-account-domain"},
+		Host:   ts.URL,
+		client: ts.Client(),
+		Logger: logger,
+	}
+
+	if _, _, err := p.authenticate(t.Context(), "user1", "pass", connector.Scopes{DomainID: "request-domain", MFACode: "123456"}); err != nil {
+		t.Fatalf("authenticate error: %v", err)
+	}
+
+	wantMethods := []string{"password", "totp"}
+	if !equalStringSlices(got.Auth.Identity.Methods, wantMethods) {
+		t.Fatalf("expected methods %v, got %v", wantMethods, got.Auth.Identity.Methods)
+	}
+	if got.Auth.Identity.Totp == nil {
+		t.Fatal("expected totp auth method to be present when MFACode is set")
+	}
+	if got.Auth.Identity.Totp.User.Passcode != "123456" {
+		t.Fatalf("expected totp passcode %q, got %q", "123456", got.Auth.Identity.Totp.User.Passcode)
+	}
+	if got.Auth.Identity.Totp.User.Name != "user1" {
+		t.Fatalf("expected totp username %q, got %q", "user1", got.Auth.Identity.Totp.User.Name)
+	}
+	if got.Auth.Identity.Totp.User.Domain.ID != "request-domain" {
+		t.Fatalf("expected totp domain ID %q, got domain=%+v", "request-domain", got.Auth.Identity.Totp.User.Domain)
+	}
+	// password method must still be sent alongside totp, unchanged.
+	if got.Auth.Identity.Password.User.Name != "user1" {
+		t.Fatalf("expected password username %q, got %q", "user1", got.Auth.Identity.Password.User.Name)
+	}
+}
+
+func TestAuthenticate_NoMFACodeOmitsTotp(t *testing.T) {
+	var got authenticateRequestBody
+	var rawBody string
+	ts := newAuthenticateStubServerWithRawBody(t, &got, &rawBody)
+	defer ts.Close()
+
+	logger := slog.New(slog.NewTextHandler(testDiscard{}, nil))
+	p := &conn{
+		Domain: domainKeystone{Name: "admin-account-domain"},
+		Host:   ts.URL,
+		client: ts.Client(),
+		Logger: logger,
+	}
+
+	if _, _, err := p.authenticate(t.Context(), "user1", "pass", connector.Scopes{}); err != nil {
+		t.Fatalf("authenticate error: %v", err)
+	}
+
+	wantMethods := []string{"password"}
+	if !equalStringSlices(got.Auth.Identity.Methods, wantMethods) {
+		t.Fatalf("expected methods %v, got %v", wantMethods, got.Auth.Identity.Methods)
+	}
+	if got.Auth.Identity.Totp != nil {
+		t.Fatalf("expected no totp auth method when MFACode is empty, got %+v", got.Auth.Identity.Totp)
+	}
+	// Guard the wire format itself, not just the decoded struct: the
+	// omitempty totp field must not appear in the JSON body at all, so a
+	// non-MFA login's request is byte-for-byte what it was before this
+	// change.
+	if strings.Contains(rawBody, "totp") {
+		t.Fatalf("expected no %q key in request body, got: %s", "totp", rawBody)
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestGetAdminTokenUnscoped_UsesConfiguredAdminDomain(t *testing.T) {

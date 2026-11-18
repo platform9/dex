@@ -142,6 +142,15 @@
   margin-bottom: 16px;
 }
 
+.dex-checkbox-label {
+  align-items: center;
+  display: flex;
+  font-size: 14px;
+  gap: 8px;
+  margin: 4px auto;
+  width: 330px;
+}
+
 .login-button {
   width: 100%;
   font-size: 14px;

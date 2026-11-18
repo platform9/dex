@@ -117,6 +117,16 @@
   margin-top: 4px;
 }
 
+.dex-checkbox-label {
+  align-items: center;
+  color: #c8d1d9;
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+  margin: 4px auto;
+  width: 250px;
+}
+
 .dex-container {
   color: #c8d1d9;
 }

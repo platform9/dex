@@ -370,6 +370,7 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		username := r.FormValue("login")
 		password := r.FormValue("password")
 		scopes := parseScopes(authReq.Scopes)
+		scopes.MFACode = r.FormValue("mfa_code")
 
 		identity, ok, err := pwConn.Login(r.Context(), scopes, username, password)
 		if err != nil {
@@ -1216,6 +1217,9 @@ func (s *Server) handlePasswordGrant(w http.ResponseWriter, r *http.Request, cli
 	}
 	if projectID := q.Get("project_id"); projectID != "" {
 		loginScopes.ProjectID = projectID
+	}
+	if mfaCode := q.Get("mfa_code"); mfaCode != "" {
+		loginScopes.MFACode = mfaCode
 	}
 	identity, ok, err := passwordConnector.Login(ctx, loginScopes, username, password)
 	if err != nil {
