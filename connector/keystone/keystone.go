@@ -216,6 +216,18 @@ func (p *conn) authenticate(ctx context.Context, username, pass string, scopes c
 		p.Logger.Error("keystone authentication request failed", "error", err)
 		return "", nil, err
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		defer resp.Body.Close()
+		if resp.Header.Get("Openstack-Auth-Receipt") == "" {
+			return "", nil, nil
+		}
+		var receipt struct {
+			RequiredAuthMethods [][]string `json:"required_auth_methods"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&receipt)
+		p.Logger.Warn("keystone login needs more auth methods", "user", username, "requiredAuthMethods", receipt.RequiredAuthMethods)
+		return "", nil, connector.ErrMFARequired
+	}
 	if resp.StatusCode/100 != 2 {
 		p.Logger.Error("keystone login failed", "statusCode", resp.StatusCode)
 		return "", nil, fmt.Errorf("keystone login: URL %s error %v", authTokenURL, resp.StatusCode)

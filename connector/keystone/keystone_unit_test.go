@@ -1,7 +1,9 @@
 package keystone
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -867,5 +869,56 @@ func TestHyphenatedRoleCannotSpoofProjectGroup(t *testing.T) {
 	spoof := generateSystemGroupName(namedIdentifier{Name: "p-8f3a9b2c4d5e6f708192a3b4c5d6e7f8-admin"}, "acme")
 	if spoof == idGroup {
 		t.Fatalf("system role group %q collides with project ID group", spoof)
+	}
+}
+
+// TestLogin_KeystoneRejections checks how Login reports each kind of Keystone rejection of /v3/auth/tokens.
+func TestLogin_KeystoneRejections(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  int
+		receipt bool
+		wantErr bool
+		wantMFA bool
+	}{
+		{name: "401 with auth receipt is MFA required", status: http.StatusUnauthorized, receipt: true, wantErr: true, wantMFA: true},
+		{name: "401 without receipt is invalid credentials", status: http.StatusUnauthorized},
+		{name: "500 stays an error", status: http.StatusInternalServerError, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.receipt {
+					w.Header().Set("Openstack-Auth-Receipt", "receipt-id-secret")
+				}
+				w.WriteHeader(tc.status)
+				if tc.receipt {
+					_, _ = io.WriteString(w, `{"receipt": {"methods": ["password"]}, "required_auth_methods": [["password", "totp"]]}`)
+				}
+			}))
+			defer ts.Close()
+
+			var logs bytes.Buffer
+			p := &conn{Host: ts.URL, client: ts.Client(), Logger: slog.New(slog.NewTextHandler(&logs, nil))}
+
+			_, ok, err := p.Login(t.Context(), connector.Scopes{}, "user1", "pass")
+			if ok {
+				t.Fatal("expected ok=false")
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if errors.Is(err, connector.ErrMFARequired) != tc.wantMFA {
+				t.Fatalf("errors.Is(err, ErrMFARequired) = %v, want %v (err = %v)", !tc.wantMFA, tc.wantMFA, err)
+			}
+			if tc.receipt {
+				if !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "totp") {
+					t.Fatalf("expected a warning naming the required methods, got logs: %s", logs.String())
+				}
+				if strings.Contains(logs.String(), "receipt-id-secret") {
+					t.Fatalf("receipt ID must not be logged, got logs: %s", logs.String())
+				}
+			}
+		})
 	}
 }

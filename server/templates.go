@@ -291,7 +291,7 @@ func (t *templates) login(r *http.Request, w http.ResponseWriter, connectors []c
 	return renderTemplate(w, t.loginTmpl, data)
 }
 
-func (t *templates) password(r *http.Request, w http.ResponseWriter, postURL, lastUsername, usernamePrompt string, lastWasInvalid bool, backLink string) error {
+func (t *templates) password(r *http.Request, w http.ResponseWriter, postURL, lastUsername, usernamePrompt string, lastWasInvalid, mfaRequired bool, backLink string) error {
 	if lastWasInvalid {
 		w.WriteHeader(http.StatusUnauthorized)
 	}
@@ -301,8 +301,9 @@ func (t *templates) password(r *http.Request, w http.ResponseWriter, postURL, la
 		Username       string
 		UsernamePrompt string
 		Invalid        bool
+		MFARequired    bool
 		ReqPath        string
-	}{postURL, backLink, lastUsername, usernamePrompt, lastWasInvalid, r.URL.Path}
+	}{postURL, backLink, lastUsername, usernamePrompt, lastWasInvalid, mfaRequired, r.URL.Path}
 	return renderTemplate(w, t.passwordTmpl, data)
 }
 
